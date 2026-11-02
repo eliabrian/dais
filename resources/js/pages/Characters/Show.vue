@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Form, Head, Link, router, usePage } from '@inertiajs/vue3';
-import { computed, reactive, ref } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import AuthController from '@/actions/App/Http/Controllers/AuthController';
 import CharacterController from '@/actions/App/Http/Controllers/CharacterController';
 import { dashboard } from '@/routes';
@@ -13,6 +13,10 @@ import type {
     CharacterCampaignRef,
     CompendiumEntry,
     CompendiumType,
+    SheetArmorItem,
+    SheetInventoryItem,
+    SheetSpellItem,
+    SheetWeaponItem,
     SkillProficiency,
 } from '@/types';
 
@@ -77,6 +81,9 @@ const sheet = reactive({
     xp: Number(sd.xp ?? 0),
     armor_class: Number(sd.armor_class ?? 10),
     armor_equipped: sd.armor_equipped ?? '',
+    armors_list: Array.isArray(sd.armors_list)
+        ? ([...sd.armors_list] as SheetArmorItem[])
+        : ([] as SheetArmorItem[]),
     speed: Number(sd.speed ?? 30),
     size: sd.size ?? 'Medium',
     heroic_inspiration: Boolean(sd.heroic_inspiration ?? false),
@@ -109,6 +116,9 @@ const sheet = reactive({
     weapon_masteries: Array.isArray(sd.weapon_masteries)
         ? [...sd.weapon_masteries]
         : ([] as string[]),
+    weapons_list: Array.isArray(sd.weapons_list)
+        ? ([...sd.weapons_list] as SheetWeaponItem[])
+        : ([] as SheetWeaponItem[]),
     weapons_attacks: sd.weapons_attacks ?? '',
     features_traits: sd.features_traits ?? '',
     proficiencies: sd.proficiencies ?? '',
@@ -119,12 +129,18 @@ const sheet = reactive({
         gp: Number(sd.coins?.gp ?? 0),
         pp: Number(sd.coins?.pp ?? 0),
     },
+    inventory_list: Array.isArray(sd.inventory_list)
+        ? ([...sd.inventory_list] as SheetInventoryItem[])
+        : ([] as SheetInventoryItem[]),
     equipment: sd.equipment ?? '',
     spellcasting_ability: (sd.spellcasting_ability ?? 'none') as
         | 'none'
         | 'int'
         | 'wis'
         | 'cha',
+    spells_list: Array.isArray(sd.spells_list)
+        ? ([...sd.spells_list] as SheetSpellItem[])
+        : ([] as SheetSpellItem[]),
     spells: sd.spells ?? '',
     notes: sd.notes ?? '',
 });
@@ -369,37 +385,357 @@ function flashNotice(msg: string): void {
     }, 3500);
 }
 
+function recalculateAc(): void {
+    if (!sheet.armors_list || sheet.armors_list.length === 0) {
+        return;
+    }
+    const dexScore = Number(sheet.abilities.dex || 10);
+    const dexMod = Math.floor((dexScore - 10) / 2);
+
+    const equippedBody = sheet.armors_list.find(
+        (a) => a.equipped && a.category?.toLowerCase() !== 'shield',
+    );
+    const equippedShields = sheet.armors_list.filter(
+        (a) => a.equipped && a.category?.toLowerCase() === 'shield',
+    );
+    const shieldBonus = equippedShields.reduce(
+        (sum, s) => sum + (s.ac_bonus ?? 2),
+        0,
+    );
+
+    if (equippedBody) {
+        const cat = equippedBody.category?.toLowerCase() || '';
+        const base = Number(equippedBody.ac_base ?? 10);
+        let calculated = base;
+        if (equippedBody.dex_bonus === 'full' || cat.includes('light')) {
+            calculated += dexMod;
+        } else if (
+            equippedBody.dex_bonus === 'max_2' ||
+            cat.includes('medium')
+        ) {
+            calculated += Math.min(2, Math.max(0, dexMod));
+        }
+        sheet.armor_class = calculated + shieldBonus;
+    } else {
+        sheet.armor_class = 10 + dexMod + shieldBonus;
+    }
+}
+
+watch(
+    () => sheet.abilities.dex,
+    () => {
+        if (sheet.armors_list.length > 0) {
+            recalculateAc();
+        }
+    },
+);
+
+function getWeaponAttackBonus(item: SheetWeaponItem): string {
+    const strMod = abilityMod('str');
+    const dexMod = abilityMod('dex');
+    let chosenMod = strMod;
+    if (item.ability === 'dex') {
+        chosenMod = dexMod;
+    } else if (
+        item.ability === 'dex_or_str' ||
+        item.properties?.some((p) => p.toLowerCase().includes('finesse'))
+    ) {
+        chosenMod = Math.max(strMod, dexMod);
+    }
+    const totalBonus =
+        chosenMod + proficiencyBonus.value - exhaustionPenalty.value;
+    return formatSigned(totalBonus);
+}
+
+function getWeaponDamageDisplay(item: SheetWeaponItem): string {
+    const strMod = abilityMod('str');
+    const dexMod = abilityMod('dex');
+    let chosenMod = strMod;
+    if (item.ability === 'dex') {
+        chosenMod = dexMod;
+    } else if (
+        item.ability === 'dex_or_str' ||
+        item.properties?.some((p) => p.toLowerCase().includes('finesse'))
+    ) {
+        chosenMod = Math.max(strMod, dexMod);
+    }
+    const dmgSign =
+        chosenMod >= 0 ? `+ ${chosenMod}` : `- ${Math.abs(chosenMod)}`;
+    const baseDamage =
+        `${item.damage || '1d6'} ${dmgSign} ${item.damage_type || ''}`.trim();
+
+    const versatileProp = item.properties?.find((p) =>
+        p.toLowerCase().includes('versatile'),
+    );
+    if (versatileProp) {
+        const match = versatileProp.match(/\((.*?)\)/);
+        const vDie = match ? match[1] : '';
+        if (vDie) {
+            return `${baseDamage} (Two-Handed: ${vDie} ${dmgSign})`;
+        }
+    }
+    return baseDamage;
+}
+
+const groupedSpells = computed(() => {
+    const groups: { level: number; label: string; spells: SheetSpellItem[] }[] =
+        [];
+    const levels = Array.from(
+        new Set((sheet.spells_list || []).map((s) => s.level)),
+    ).sort((a, b) => a - b);
+    for (const lvl of levels) {
+        groups.push({
+            level: lvl,
+            label: lvl === 0 ? 'Cantrips' : `Level ${lvl} Spells`,
+            spells: (sheet.spells_list || []).filter((s) => s.level === lvl),
+        });
+    }
+    return groups;
+});
+
+const expandedSpellIds = ref<string[]>([]);
+function toggleSpellExpand(id: string): void {
+    const idx = expandedSpellIds.value.indexOf(id);
+    if (idx >= 0) {
+        expandedSpellIds.value.splice(idx, 1);
+    } else {
+        expandedSpellIds.value.push(id);
+    }
+}
+
+const expandedItemIds = ref<string[]>([]);
+function toggleItemExpand(id: string): void {
+    const idx = expandedItemIds.value.indexOf(id);
+    if (idx >= 0) {
+        expandedItemIds.value.splice(idx, 1);
+    } else {
+        expandedItemIds.value.push(id);
+    }
+}
+
+function removeWeapon(id: string): void {
+    if (!props.canEdit) {
+        return;
+    }
+    sheet.weapons_list = sheet.weapons_list.filter((w) => w.id !== id);
+}
+
+function removeArmor(id: string): void {
+    if (!props.canEdit) {
+        return;
+    }
+    sheet.armors_list = sheet.armors_list.filter((a) => a.id !== id);
+    recalculateAc();
+}
+
+function toggleArmorEquipped(item: SheetArmorItem): void {
+    if (!props.canEdit) {
+        return;
+    }
+    item.equipped = !item.equipped;
+    recalculateAc();
+}
+
+function removeSpell(id: string): void {
+    if (!props.canEdit) {
+        return;
+    }
+    sheet.spells_list = sheet.spells_list.filter((s) => s.id !== id);
+}
+
+function toggleSpellPrepared(item: SheetSpellItem): void {
+    if (!props.canEdit) {
+        return;
+    }
+    item.prepared = !item.prepared;
+}
+
+function removeInventoryItem(id: string): void {
+    if (!props.canEdit) {
+        return;
+    }
+    sheet.inventory_list = sheet.inventory_list.filter((i) => i.id !== id);
+}
+
+function changeInventoryQuantity(
+    item: SheetInventoryItem,
+    delta: number,
+): void {
+    if (!props.canEdit) {
+        return;
+    }
+    item.quantity = Math.max(1, (item.quantity || 1) + delta);
+}
+
+// Universal cross-browser ID generator (safe in non-secure HTTP contexts like dais.test or mobile IPs)
+function generateId(): string {
+    if (
+        typeof window !== 'undefined' &&
+        window.crypto &&
+        typeof window.crypto.randomUUID === 'function'
+    ) {
+        return window.crypto.randomUUID();
+    }
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+        const r = (Math.random() * 16) | 0;
+        const v = c === 'x' ? r : (r & 0x3) | 0x8;
+        return v.toString(16);
+    });
+}
+
+// Custom quick-add forms
+const showCustomWeaponForm = ref(false);
+const customWeapon = reactive({
+    name: '',
+    category: 'Martial Melee',
+    damage: '1d8',
+    damage_type: 'slashing',
+    ability: 'str',
+    mastery: '',
+    properties: '',
+    range: 'Melee',
+});
+function addCustomWeapon(): void {
+    if (!props.canEdit || !customWeapon.name.trim()) {
+        return;
+    }
+    sheet.weapons_list.push({
+        id: generateId(),
+        name: customWeapon.name.trim(),
+        category: customWeapon.category.trim() || 'Custom Weapon',
+        damage: customWeapon.damage.trim() || '1d6',
+        damage_type: customWeapon.damage_type.trim() || 'slashing',
+        ability: customWeapon.ability,
+        mastery: customWeapon.mastery.trim(),
+        properties: customWeapon.properties
+            ? customWeapon.properties
+                  .split(',')
+                  .map((p) => p.trim())
+                  .filter(Boolean)
+            : [],
+        range: customWeapon.range.trim() || 'Melee',
+    });
+    if (
+        customWeapon.mastery.trim() &&
+        !sheet.weapon_masteries.includes(customWeapon.mastery.trim())
+    ) {
+        sheet.weapon_masteries.push(customWeapon.mastery.trim());
+    }
+    customWeapon.name = '';
+    customWeapon.properties = '';
+    showCustomWeaponForm.value = false;
+    flashNotice('Added custom weapon!');
+}
+
+const showCustomArmorForm = ref(false);
+const customArmor = reactive({
+    name: '',
+    category: 'Medium',
+    ac_base: 14,
+    ac_bonus: 0,
+    dex_bonus: 'max_2' as 'full' | 'max_2' | 'none',
+    stealth_disadv: false,
+});
+function addCustomArmor(): void {
+    if (!props.canEdit || !customArmor.name.trim()) {
+        return;
+    }
+    const isShield = customArmor.category.toLowerCase() === 'shield';
+    sheet.armors_list.push({
+        id: generateId(),
+        name: customArmor.name.trim(),
+        category: customArmor.category,
+        ac_base: isShield ? undefined : Number(customArmor.ac_base || 10),
+        ac_bonus: isShield ? Number(customArmor.ac_bonus || 2) : undefined,
+        dex_bonus: isShield ? 'none' : customArmor.dex_bonus,
+        stealth_disadv: customArmor.stealth_disadv,
+        equipped: true,
+    });
+    recalculateAc();
+    customArmor.name = '';
+    showCustomArmorForm.value = false;
+    flashNotice('Added custom armor!');
+}
+
+const showCustomSpellForm = ref(false);
+const customSpell = reactive({
+    name: '',
+    level: 1,
+    school: 'Evocation',
+    casting_time: '1 Action',
+    range: '60 ft',
+    duration: 'Instantaneous',
+    components: 'V, S',
+    summary: '',
+});
+function addCustomSpell(): void {
+    if (!props.canEdit || !customSpell.name.trim()) {
+        return;
+    }
+    sheet.spells_list.push({
+        id: generateId(),
+        name: customSpell.name.trim(),
+        level: Number(customSpell.level || 0),
+        school: customSpell.school.trim(),
+        casting_time: customSpell.casting_time.trim(),
+        range: customSpell.range.trim(),
+        duration: customSpell.duration.trim(),
+        components: customSpell.components.trim(),
+        summary: customSpell.summary.trim(),
+        prepared: true,
+    });
+    customSpell.name = '';
+    customSpell.summary = '';
+    showCustomSpellForm.value = false;
+    flashNotice('Added custom spell!');
+}
+
+const showCustomItemForm = ref(false);
+const customItem = reactive({
+    name: '',
+    quantity: 1,
+    weight: '1 lb',
+    summary: '',
+});
+function addCustomItem(): void {
+    if (!props.canEdit || !customItem.name.trim()) {
+        return;
+    }
+    sheet.inventory_list.push({
+        id: generateId(),
+        name: customItem.name.trim(),
+        quantity: Math.max(1, Number(customItem.quantity || 1)),
+        weight: customItem.weight.trim(),
+        summary: customItem.summary.trim(),
+    });
+    customItem.name = '';
+    customItem.summary = '';
+    showCustomItemForm.value = false;
+    flashNotice('Added custom item!');
+}
+
 function addCompendiumEntry(entry: CompendiumEntry): void {
     if (!props.canEdit) {
         return;
     }
 
     if (entry.type === 'weapon') {
-        let ability: AbilityKey = 'str';
-        if (entry.data?.ability === 'dex_or_str') {
-            ability = abilityMod('dex') >= abilityMod('str') ? 'dex' : 'str';
-        } else if (entry.data?.ability === 'dex') {
-            ability = 'dex';
-        }
-
-        const atkBonus =
-            abilityMod(ability) +
-            proficiencyBonus.value -
-            exhaustionPenalty.value;
-        const dmgMod = abilityMod(ability);
-        const dmgSign = dmgMod >= 0 ? `+${dmgMod}` : `${dmgMod}`;
-        const masteryText = entry.data?.mastery
-            ? ` (${entry.data.mastery} mastery)`
-            : '';
-        const propsText = entry.data?.properties?.length
-            ? ` [${entry.data.properties.join(', ')}]`
-            : '';
-
-        const line = `${entry.name} (${entry.data?.category ?? 'Weapon'}): ${formatSigned(atkBonus)} to hit, ${entry.data?.damage ?? '1d8'}${dmgSign} ${entry.data?.damage_type ?? ''}${masteryText}${propsText}`;
-
-        sheet.weapons_attacks = sheet.weapons_attacks
-            ? `${sheet.weapons_attacks}\n${line}`
-            : line;
+        const newWeapon: SheetWeaponItem = {
+            id: generateId(),
+            compendium_id: entry.id,
+            name: entry.name,
+            category: (entry.data?.category as string) || 'Weapon',
+            damage: (entry.data?.damage as string) || '1d6',
+            damage_type: (entry.data?.damage_type as string) || 'slashing',
+            ability: (entry.data?.ability as string) || 'str',
+            mastery: (entry.data?.mastery as string) || '',
+            properties: Array.isArray(entry.data?.properties)
+                ? [...entry.data.properties]
+                : [],
+            range: (entry.data?.range as string) || 'Melee',
+            weight: (entry.data?.weight as string) || '',
+        };
+        sheet.weapons_list.push(newWeapon);
 
         if (
             entry.data?.mastery &&
@@ -408,70 +744,83 @@ function addCompendiumEntry(entry: CompendiumEntry): void {
             sheet.weapon_masteries.push(entry.data.mastery);
         }
 
-        flashNotice(`Added ${entry.name} to weapons & attacks!`);
+        flashNotice(`Added ${entry.name} to weapons list!`);
     } else if (entry.type === 'armor') {
-        if (entry.data?.category === 'Shield') {
-            const line = `${entry.name} (+2 AC, 6 lb)`;
-            sheet.armor_equipped = sheet.armor_equipped
-                ? `${sheet.armor_equipped}\n${line}`
-                : line;
-            sheet.armor_class = (sheet.armor_class || 10) + 2;
-            flashNotice('Equipped Shield (+2 AC)!');
-        } else {
-            const baseAc = Number(entry.data?.ac_base ?? 11);
-            let calculatedAc = baseAc;
-            if (entry.data?.dex_bonus === 'full') {
-                calculatedAc += abilityMod('dex');
-            } else if (entry.data?.dex_bonus === 'max_2') {
-                calculatedAc += Math.min(2, Math.max(0, abilityMod('dex')));
-            }
-            sheet.armor_class = calculatedAc;
+        const isShield =
+            entry.data?.category === 'Shield' ||
+            entry.name.toLowerCase().includes('shield');
+        const newArmor: SheetArmorItem = {
+            id: generateId(),
+            compendium_id: entry.id,
+            name: entry.name,
+            category:
+                (entry.data?.category as string) ||
+                (isShield ? 'Shield' : 'Armor'),
+            ac_base:
+                entry.data?.ac_base !== undefined
+                    ? Number(entry.data.ac_base)
+                    : undefined,
+            ac_bonus:
+                entry.data?.ac_bonus !== undefined
+                    ? Number(entry.data.ac_bonus)
+                    : isShield
+                      ? 2
+                      : undefined,
+            dex_bonus:
+                (entry.data?.dex_bonus as 'full' | 'max_2' | 'none') || 'none',
+            stealth_disadv: Boolean(entry.data?.stealth_disadv),
+            str_req:
+                entry.data?.str_req !== undefined
+                    ? Number(entry.data.str_req)
+                    : null,
+            weight: (entry.data?.weight as string) || '',
+            equipped: true,
+        };
+        sheet.armors_list.push(newArmor);
+        recalculateAc();
 
-            const stealthNote = entry.data?.stealth_disadv
-                ? ', Stealth Disadvantage'
-                : '';
-            const strNote = entry.data?.str_req
-                ? `, Str ${entry.data.str_req} req`
-                : '';
-            const line = `${entry.name} (AC ${baseAc}${stealthNote}${strNote}, ${entry.data?.weight ?? ''})`;
-
-            sheet.armor_equipped = sheet.armor_equipped
-                ? `${sheet.armor_equipped}\n${line}`
-                : line;
-            flashNotice(
-                `Equipped ${entry.name} (AC calculated to ${calculatedAc})!`,
-            );
-        }
+        flashNotice(
+            `Added & equipped ${entry.name} (AC: ${sheet.armor_class})!`,
+        );
     } else if (entry.type === 'spell') {
-        let spellDetail = '';
-        if (entry.data?.attack_type) {
-            const atk =
-                spellAttackBonus.value !== null
-                    ? formatSigned(spellAttackBonus.value)
-                    : formatSigned(proficiencyBonus.value + abilityMod('int'));
-            spellDetail = ` · Spell Attack: ${atk} to hit`;
-        }
-        if (entry.data?.save_ability) {
-            const dc =
-                spellSaveDc.value !== null
-                    ? spellSaveDc.value
-                    : 8 + proficiencyBonus.value + abilityMod('int');
-            spellDetail += ` · Save: DC ${dc} ${String(entry.data.save_ability).toUpperCase()}`;
-        }
-
-        const levelLabel =
-            entry.data?.level === 0
-                ? 'Cantrip'
-                : `Level ${entry.data?.level ?? 1}`;
-        const line = `${entry.name} (${levelLabel} ${entry.data?.school ?? ''}): ${entry.data?.casting_time ?? '1 Action'}, ${entry.data?.range ?? 'Touch'}${spellDetail}. ${entry.summary ?? ''}`;
-
-        sheet.spells = sheet.spells ? `${sheet.spells}\n${line}` : line;
-        flashNotice(`Added ${entry.name} to spells!`);
+        const newSpell: SheetSpellItem = {
+            id: generateId(),
+            compendium_id: entry.id,
+            name: entry.name,
+            level: Number(entry.data?.level ?? 0),
+            school: (entry.data?.school as string) || '',
+            casting_time: (entry.data?.casting_time as string) || '1 Action',
+            range: (entry.data?.range as string) || 'Self',
+            components: (entry.data?.components as string) || 'V, S',
+            duration: (entry.data?.duration as string) || 'Instantaneous',
+            summary: entry.summary || '',
+            description: entry.description || '',
+            attack_type: (entry.data?.attack_type as string) || '',
+            damage: (entry.data?.damage as string) || '',
+            damage_type: (entry.data?.damage_type as string) || '',
+            save_ability: (entry.data?.save_ability as string) || '',
+            prepared: true,
+        };
+        sheet.spells_list.push(newSpell);
+        flashNotice(`Added ${entry.name} to spells list!`);
     } else if (entry.type === 'gear') {
-        const line = `${entry.name}: ${entry.summary ?? ''}`;
-        sheet.equipment = sheet.equipment
-            ? `${sheet.equipment}\n${line}`
-            : line;
+        const existing = sheet.inventory_list.find(
+            (i) => i.name.toLowerCase() === entry.name.toLowerCase(),
+        );
+        if (existing) {
+            existing.quantity = (existing.quantity || 1) + 1;
+        } else {
+            const newItem: SheetInventoryItem = {
+                id: generateId(),
+                compendium_id: entry.id,
+                name: entry.name,
+                quantity: 1,
+                weight: (entry.data?.weight as string) || '',
+                summary: entry.summary || '',
+                description: entry.description || '',
+            };
+            sheet.inventory_list.push(newItem);
+        }
         flashNotice(`Added ${entry.name} to inventory!`);
     }
 }
@@ -498,6 +847,10 @@ function saveCharacter(): void {
                 saving_throws: [...sheet.saving_throws],
                 skills: { ...sheet.skills },
                 weapon_masteries: [...sheet.weapon_masteries],
+                weapons_list: [...sheet.weapons_list],
+                armors_list: [...sheet.armors_list],
+                spells_list: [...sheet.spells_list],
+                inventory_list: [...sheet.inventory_list],
                 coins: { ...sheet.coins },
             },
         },
@@ -1798,7 +2151,7 @@ function saveCharacter(): void {
                 v-show="activeTab === 'equipments'"
                 class="space-y-5 sm:space-y-6"
             >
-                <!-- Armor & Shield (Armor Text is Quick Editable, AC Base in Edit Stats Mode) -->
+                <!-- Armor & Shield Section -->
                 <section
                     class="rounded-lg bg-white p-5 shadow-[inset_0px_0px_0px_1px_rgba(26,26,0,0.16)] sm:p-6 dark:bg-[#161615] dark:shadow-[inset_0px_0px_0px_1px_#fffaed2d]"
                 >
@@ -1806,7 +2159,7 @@ function saveCharacter(): void {
                         class="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"
                     >
                         <div>
-                            <div class="flex flex-wrap items-center gap-2.5">
+                            <div class="flex flex-wrap items-center gap-2">
                                 <h2 class="text-base font-semibold">
                                     Armor &amp; Shield
                                 </h2>
@@ -1818,12 +2171,27 @@ function saveCharacter(): void {
                                 >
                                     <span>+ Add Armor from Compendium</span>
                                 </button>
+                                <button
+                                    v-if="props.canEdit"
+                                    type="button"
+                                    class="inline-flex cursor-pointer items-center gap-1 rounded-xs border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1 text-xs font-medium text-[#706f6c] hover:border-[#1b1b18] hover:text-[#1b1b18] dark:border-[#3E3E3A] dark:bg-[#0a0a0a] dark:text-[#A1A09A] dark:hover:border-[#EDEDEC] dark:hover:text-[#EDEDEC]"
+                                    @click="
+                                        showCustomArmorForm =
+                                            !showCustomArmorForm
+                                    "
+                                >
+                                    <span>{{
+                                        showCustomArmorForm
+                                            ? 'Cancel'
+                                            : '+ Custom Armor'
+                                    }}</span>
+                                </button>
                             </div>
                             <p
                                 class="mt-0.5 text-xs text-[#706f6c] dark:text-[#A1A09A]"
                             >
-                                Note your equipped armor, shield, magical
-                                defensive items, and stealth properties.
+                                Equipped armor and shields auto-calculate your
+                                Armor Class (AC).
                             </p>
                         </div>
 
@@ -1835,7 +2203,7 @@ function saveCharacter(): void {
                             </span>
                             <span
                                 v-if="!canModify"
-                                class="text-xl font-bold sm:text-2xl"
+                                class="rounded-sm bg-[#1b1b18]/5 px-3 py-1 text-xl font-bold sm:text-2xl dark:bg-[#EDEDEC]/5"
                             >
                                 {{ sheet.armor_class }}
                             </span>
@@ -1848,16 +2216,221 @@ function saveCharacter(): void {
                         </div>
                     </div>
 
-                    <textarea
-                        v-model="sheet.armor_equipped"
-                        :disabled="!props.canEdit"
-                        rows="4"
-                        placeholder="e.g. Chain Mail (AC 16, Str 13, Stealth Disadvantage), Shield (+2 AC)..."
-                        class="mt-4 block w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] p-3 text-sm focus:border-[#1b1b18] focus:outline-none dark:border-[#3E3E3A] dark:bg-[#0a0a0a] dark:focus:border-[#EDEDEC]"
-                    />
+                    <!-- Custom Armor Form -->
+                    <div
+                        v-if="showCustomArmorForm && props.canEdit"
+                        class="mt-4 rounded-md border border-[#e3e3e0] bg-[#1b1b18]/[0.02] p-4 dark:border-[#3E3E3A] dark:bg-[#EDEDEC]/[0.02]"
+                    >
+                        <h3
+                            class="text-xs font-bold tracking-wider text-[#706f6c] uppercase dark:text-[#A1A09A]"
+                        >
+                            Add Custom Armor or Shield
+                        </h3>
+                        <div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-4">
+                            <div class="sm:col-span-2">
+                                <label class="block text-xs font-medium"
+                                    >Armor Name</label
+                                >
+                                <input
+                                    v-model="customArmor.name"
+                                    type="text"
+                                    placeholder="e.g. Mithral Breastplate"
+                                    class="mt-1 w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1.5 text-xs dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
+                                />
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium"
+                                    >Type</label
+                                >
+                                <select
+                                    v-model="customArmor.category"
+                                    class="mt-1 w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2 py-1.5 text-xs dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
+                                >
+                                    <option value="Light">Light Armor</option>
+                                    <option value="Medium">Medium Armor</option>
+                                    <option value="Heavy">Heavy Armor</option>
+                                    <option value="Shield">Shield</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium">
+                                    {{
+                                        customArmor.category === 'Shield'
+                                            ? 'AC Bonus'
+                                            : 'Base AC'
+                                    }}
+                                </label>
+                                <input
+                                    v-if="customArmor.category === 'Shield'"
+                                    v-model.number="customArmor.ac_bonus"
+                                    type="number"
+                                    class="mt-1 w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1.5 text-center text-xs dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
+                                />
+                                <input
+                                    v-else
+                                    v-model.number="customArmor.ac_base"
+                                    type="number"
+                                    class="mt-1 w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1.5 text-center text-xs dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
+                                />
+                            </div>
+                        </div>
+
+                        <div
+                            class="mt-3 flex flex-wrap items-center justify-between gap-3"
+                        >
+                            <label
+                                class="flex items-center gap-2 text-xs text-[#706f6c] dark:text-[#A1A09A]"
+                            >
+                                <input
+                                    v-model="customArmor.stealth_disadv"
+                                    type="checkbox"
+                                    class="rounded text-[#1b1b18]"
+                                />
+                                <span>Disadvantage on Stealth checks</span>
+                            </label>
+                            <div class="flex items-center gap-2">
+                                <button
+                                    type="button"
+                                    class="rounded-xs px-2.5 py-1 text-xs text-[#706f6c] hover:text-[#1b1b18] dark:text-[#A1A09A]"
+                                    @click="showCustomArmorForm = false"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    class="rounded-xs bg-[#1b1b18] px-3 py-1 text-xs font-semibold text-white dark:bg-[#EDEDEC] dark:text-[#1b1b18]"
+                                    @click="addCustomArmor"
+                                >
+                                    Save to List
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Armor & Shield Items List -->
+                    <div
+                        v-if="sheet.armors_list.length > 0"
+                        class="mt-4 space-y-2"
+                    >
+                        <div
+                            v-for="armor in sheet.armors_list"
+                            :key="armor.id"
+                            class="flex flex-col justify-between gap-3 rounded-md border border-[#e3e3e0] bg-[#FDFDFC] p-3 transition-colors sm:flex-row sm:items-center dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
+                        >
+                            <div class="flex flex-wrap items-center gap-2">
+                                <span class="text-sm font-semibold">
+                                    {{ armor.name }}
+                                </span>
+                                <span
+                                    class="rounded-full border border-[#e3e3e0] px-2 py-0.5 text-[11px] font-medium text-[#706f6c] dark:border-[#3E3E3A] dark:text-[#A1A09A]"
+                                >
+                                    {{ armor.category }}
+                                </span>
+                                <span
+                                    class="rounded-full bg-[#1b1b18]/5 px-2 py-0.5 text-[11px] font-bold text-[#1b1b18] dark:bg-[#EDEDEC]/10 dark:text-[#EDEDEC]"
+                                >
+                                    {{
+                                        armor.category?.toLowerCase() ===
+                                        'shield'
+                                            ? `+${armor.ac_bonus || 2} AC`
+                                            : `AC ${armor.ac_base || 10}`
+                                    }}
+                                </span>
+                                <span
+                                    v-if="
+                                        armor.category?.toLowerCase() !==
+                                        'shield'
+                                    "
+                                    class="rounded-full border border-[#e3e3e0] px-2 py-0.5 text-[10px] text-[#706f6c] dark:border-[#3E3E3A] dark:text-[#A1A09A]"
+                                >
+                                    {{
+                                        armor.dex_bonus === 'full'
+                                            ? '+ Full Dex'
+                                            : armor.dex_bonus === 'max_2'
+                                              ? '+ Dex (max 2)'
+                                              : 'No Dex'
+                                    }}
+                                </span>
+                                <span
+                                    v-if="armor.stealth_disadv"
+                                    class="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-400"
+                                >
+                                    Stealth Disadv.
+                                </span>
+                                <span
+                                    v-if="armor.str_req"
+                                    class="rounded-full border border-[#e3e3e0] px-2 py-0.5 text-[10px] text-[#706f6c] dark:border-[#3E3E3A] dark:text-[#A1A09A]"
+                                >
+                                    Str {{ armor.str_req }}+
+                                </span>
+                                <span
+                                    v-if="armor.weight"
+                                    class="text-[10px] text-[#706f6c] dark:text-[#A1A09A]"
+                                >
+                                    {{ armor.weight }}
+                                </span>
+                            </div>
+
+                            <div
+                                class="flex items-center gap-2 self-end sm:self-center"
+                            >
+                                <button
+                                    type="button"
+                                    :disabled="!props.canEdit"
+                                    class="cursor-pointer rounded-xs border px-2.5 py-1 text-xs font-semibold transition-colors disabled:cursor-default"
+                                    :class="
+                                        armor.equipped
+                                            ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+                                            : 'border-[#e3e3e0] text-[#706f6c] hover:border-[#1b1b18] dark:border-[#3E3E3A] dark:text-[#A1A09A] dark:hover:border-[#EDEDEC]'
+                                    "
+                                    @click="toggleArmorEquipped(armor)"
+                                >
+                                    {{
+                                        armor.equipped
+                                            ? '✓ Equipped'
+                                            : 'Unequipped'
+                                    }}
+                                </button>
+                                <button
+                                    v-if="props.canEdit"
+                                    type="button"
+                                    title="Remove armor"
+                                    class="cursor-pointer rounded-xs p-1 text-xs text-[#706f6c] transition-colors hover:text-red-600 dark:text-[#A1A09A] dark:hover:text-red-400"
+                                    @click="removeArmor(armor.id)"
+                                >
+                                    ✕
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div
+                        v-else
+                        class="mt-4 rounded-md border border-dashed border-[#e3e3e0] p-4 text-center text-xs text-[#706f6c] dark:border-[#3E3E3A] dark:text-[#A1A09A]"
+                    >
+                        No armor or shields in list. Use '+ Add Armor from
+                        Compendium' to choose leather, plate, shield, etc.
+                    </div>
+
+                    <!-- Additional Armor Notes -->
+                    <div
+                        class="mt-4 border-t border-[#e3e3e0] pt-3 dark:border-[#3E3E3A]"
+                    >
+                        <label
+                            class="block text-xs font-medium text-[#706f6c] dark:text-[#A1A09A]"
+                        >
+                            Additional Armor &amp; Defensive Notes
+                        </label>
+                        <textarea
+                            v-model="sheet.armor_equipped"
+                            :disabled="!props.canEdit"
+                            rows="2"
+                            placeholder="Magic item attunements, Ring of Protection (+1 AC), unarmored defense notes..."
+                            class="mt-1.5 block w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] p-2.5 text-xs focus:border-[#1b1b18] focus:outline-none dark:border-[#3E3E3A] dark:bg-[#0a0a0a] dark:focus:border-[#EDEDEC]"
+                        />
+                    </div>
                 </section>
 
-                <!-- Weapons & 2024 Weapon Masteries (Quick Edit Always Active) -->
+                <!-- Weapons & 2024 Weapon Masteries Section -->
                 <section
                     class="rounded-lg bg-white p-5 shadow-[inset_0px_0px_0px_1px_rgba(26,26,0,0.16)] sm:p-6 dark:bg-[#161615] dark:shadow-[inset_0px_0px_0px_1px_#fffaed2d]"
                 >
@@ -1865,27 +2438,45 @@ function saveCharacter(): void {
                         class="flex flex-wrap items-center justify-between gap-2"
                     >
                         <div>
-                            <h2 class="text-base font-semibold">
-                                Weapons &amp; 2024 Weapon Masteries
-                            </h2>
+                            <div class="flex flex-wrap items-center gap-2">
+                                <h2 class="text-base font-semibold">
+                                    Weapons &amp; 2024 Weapon Masteries
+                                </h2>
+                                <button
+                                    v-if="props.canEdit"
+                                    type="button"
+                                    class="inline-flex cursor-pointer items-center gap-1 rounded-xs border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1 text-xs font-medium hover:border-[#1b1b18] dark:border-[#3E3E3A] dark:bg-[#0a0a0a] dark:hover:border-[#EDEDEC]"
+                                    @click="openCompendium('weapon')"
+                                >
+                                    <span>+ Add Weapon from Compendium</span>
+                                </button>
+                                <button
+                                    v-if="props.canEdit"
+                                    type="button"
+                                    class="inline-flex cursor-pointer items-center gap-1 rounded-xs border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1 text-xs font-medium text-[#706f6c] hover:border-[#1b1b18] hover:text-[#1b1b18] dark:border-[#3E3E3A] dark:bg-[#0a0a0a] dark:text-[#A1A09A] dark:hover:border-[#EDEDEC] dark:hover:text-[#EDEDEC]"
+                                    @click="
+                                        showCustomWeaponForm =
+                                            !showCustomWeaponForm
+                                    "
+                                >
+                                    <span>{{
+                                        showCustomWeaponForm
+                                            ? 'Cancel'
+                                            : '+ Custom Weapon'
+                                    }}</span>
+                                </button>
+                            </div>
                             <p
                                 class="mt-0.5 text-xs text-[#706f6c] dark:text-[#A1A09A]"
                             >
-                                Toggle active 2024 Weapon Mastery properties and
-                                record your equipped weapons and attack rolls.
+                                Auto-calculated Attack Rolls (+to hit) and
+                                Damage formulas based on your ability modifiers
+                                and proficiency.
                             </p>
                         </div>
-
-                        <button
-                            v-if="props.canEdit"
-                            type="button"
-                            class="inline-flex cursor-pointer items-center gap-1 rounded-xs border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1 text-xs font-medium hover:border-[#1b1b18] dark:border-[#3E3E3A] dark:bg-[#0a0a0a] dark:hover:border-[#EDEDEC]"
-                            @click="openCompendium('weapon')"
-                        >
-                            <span>+ Add Weapon from Compendium</span>
-                        </button>
                     </div>
 
+                    <!-- 2024 Weapon Mastery Pills -->
                     <div class="mt-3 flex flex-wrap gap-1.5">
                         <button
                             v-for="mastery in masteryProperties"
@@ -1904,13 +2495,263 @@ function saveCharacter(): void {
                         </button>
                     </div>
 
-                    <textarea
-                        v-model="sheet.weapons_attacks"
-                        :disabled="!props.canEdit"
-                        rows="6"
-                        placeholder="e.g. Longsword +5 to hit, 1d8+3 slashing (Sap mastery)&#10;Heavy Crossbow +4 to hit, 1d10+2 piercing (Push mastery)..."
-                        class="mt-4 block w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] p-3 text-sm focus:border-[#1b1b18] focus:outline-none dark:border-[#3E3E3A] dark:bg-[#0a0a0a] dark:focus:border-[#EDEDEC]"
-                    />
+                    <!-- Custom Weapon Form -->
+                    <div
+                        v-if="showCustomWeaponForm && props.canEdit"
+                        class="mt-4 rounded-md border border-[#e3e3e0] bg-[#1b1b18]/[0.02] p-4 dark:border-[#3E3E3A] dark:bg-[#EDEDEC]/[0.02]"
+                    >
+                        <h3
+                            class="text-xs font-bold tracking-wider text-[#706f6c] uppercase dark:text-[#A1A09A]"
+                        >
+                            Add Custom Weapon
+                        </h3>
+                        <div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-4">
+                            <div>
+                                <label class="block text-xs font-medium"
+                                    >Weapon Name</label
+                                >
+                                <input
+                                    v-model="customWeapon.name"
+                                    type="text"
+                                    placeholder="e.g. Moon-Touched Rapier"
+                                    class="mt-1 w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1.5 text-xs dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
+                                />
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium"
+                                    >Damage Dice &amp; Type</label
+                                >
+                                <div class="mt-1 flex gap-1">
+                                    <input
+                                        v-model="customWeapon.damage"
+                                        type="text"
+                                        placeholder="1d8"
+                                        class="w-16 rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2 py-1.5 text-center text-xs dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
+                                    />
+                                    <input
+                                        v-model="customWeapon.damage_type"
+                                        type="text"
+                                        placeholder="slashing"
+                                        class="w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2 py-1.5 text-xs dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
+                                    />
+                                </div>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium"
+                                    >Ability</label
+                                >
+                                <select
+                                    v-model="customWeapon.ability"
+                                    class="mt-1 w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2 py-1.5 text-xs dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
+                                >
+                                    <option value="str">Strength (STR)</option>
+                                    <option value="dex">Dexterity (DEX)</option>
+                                    <option value="dex_or_str">
+                                        Finesse (Best of STR/DEX)
+                                    </option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium"
+                                    >2024 Mastery</label
+                                >
+                                <select
+                                    v-model="customWeapon.mastery"
+                                    class="mt-1 w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2 py-1.5 text-xs dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
+                                >
+                                    <option value="">None</option>
+                                    <option
+                                        v-for="m in masteryProperties"
+                                        :key="m"
+                                        :value="m"
+                                    >
+                                        {{ m }}
+                                    </option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                            <div>
+                                <label class="block text-xs font-medium"
+                                    >Properties (comma separated)</label
+                                >
+                                <input
+                                    v-model="customWeapon.properties"
+                                    type="text"
+                                    placeholder="e.g. Versatile (1d10), Light, Thrown (20/60)"
+                                    class="mt-1 w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1.5 text-xs dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
+                                />
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium"
+                                    >Range</label
+                                >
+                                <input
+                                    v-model="customWeapon.range"
+                                    type="text"
+                                    placeholder="Melee, 150/600 ft"
+                                    class="mt-1 w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1.5 text-xs dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
+                                />
+                            </div>
+                        </div>
+
+                        <div class="mt-3 flex justify-end gap-2">
+                            <button
+                                type="button"
+                                class="rounded-xs px-2.5 py-1 text-xs text-[#706f6c] hover:text-[#1b1b18] dark:text-[#A1A09A]"
+                                @click="showCustomWeaponForm = false"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                class="rounded-xs bg-[#1b1b18] px-3 py-1 text-xs font-semibold text-white dark:bg-[#EDEDEC] dark:text-[#1b1b18]"
+                                @click="addCustomWeapon"
+                            >
+                                Save Weapon
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Weapons List Cards -->
+                    <div
+                        v-if="sheet.weapons_list.length > 0"
+                        class="mt-4 space-y-2.5"
+                    >
+                        <div
+                            v-for="weapon in sheet.weapons_list"
+                            :key="weapon.id"
+                            class="rounded-md border border-[#e3e3e0] bg-[#FDFDFC] p-3.5 transition-colors sm:p-4 dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
+                        >
+                            <div
+                                class="flex flex-wrap items-center justify-between gap-2"
+                            >
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <span
+                                        class="text-sm font-bold sm:text-base"
+                                    >
+                                        {{ weapon.name }}
+                                    </span>
+                                    <span
+                                        v-if="weapon.category"
+                                        class="rounded-full border border-[#e3e3e0] px-2 py-0.5 text-[11px] font-medium text-[#706f6c] dark:border-[#3E3E3A] dark:text-[#A1A09A]"
+                                    >
+                                        {{ weapon.category }}
+                                    </span>
+                                    <span
+                                        v-if="weapon.range"
+                                        class="text-xs text-[#706f6c] dark:text-[#A1A09A]"
+                                    >
+                                        {{ weapon.range }}
+                                    </span>
+                                </div>
+
+                                <button
+                                    v-if="props.canEdit"
+                                    type="button"
+                                    title="Remove weapon"
+                                    class="cursor-pointer rounded-xs p-1 text-xs text-[#706f6c] transition-colors hover:text-red-600 dark:text-[#A1A09A] dark:hover:text-red-400"
+                                    @click="removeWeapon(weapon.id)"
+                                >
+                                    ✕
+                                </button>
+                            </div>
+
+                            <!-- Attack & Damage Badges -->
+                            <div class="mt-3 flex flex-wrap items-center gap-3">
+                                <div
+                                    class="flex items-center gap-2 rounded-sm bg-[#1b1b18]/5 px-3 py-1.5 dark:bg-[#EDEDEC]/5"
+                                >
+                                    <span
+                                        class="text-[10px] font-bold tracking-wider text-[#706f6c] uppercase dark:text-[#A1A09A]"
+                                    >
+                                        To Hit:
+                                    </span>
+                                    <span
+                                        class="text-sm font-bold sm:text-base"
+                                    >
+                                        {{ getWeaponAttackBonus(weapon) }}
+                                    </span>
+                                </div>
+
+                                <div
+                                    class="flex items-center gap-2 rounded-sm bg-[#1b1b18]/5 px-3 py-1.5 dark:bg-[#EDEDEC]/5"
+                                >
+                                    <span
+                                        class="text-[10px] font-bold tracking-wider text-[#706f6c] uppercase dark:text-[#A1A09A]"
+                                    >
+                                        Damage:
+                                    </span>
+                                    <span
+                                        class="text-sm font-bold sm:text-base"
+                                    >
+                                        {{ getWeaponDamageDisplay(weapon) }}
+                                    </span>
+                                </div>
+                            </div>
+
+                            <!-- Mastery & Properties Tags -->
+                            <div
+                                class="mt-3 flex flex-wrap items-center gap-1.5"
+                            >
+                                <button
+                                    v-if="weapon.mastery"
+                                    type="button"
+                                    class="cursor-pointer rounded-full border px-2.5 py-0.5 text-[11px] font-semibold transition-colors"
+                                    :class="
+                                        sheet.weapon_masteries.includes(
+                                            weapon.mastery,
+                                        )
+                                            ? 'border-[#1b1b18] bg-[#1b1b18] text-white dark:border-[#EDEDEC] dark:bg-[#EDEDEC] dark:text-[#1b1b18]'
+                                            : 'border-[#e3e3e0] text-[#706f6c] hover:border-[#1b1b18] dark:border-[#3E3E3A] dark:text-[#A1A09A]'
+                                    "
+                                    :title="
+                                        sheet.weapon_masteries.includes(
+                                            weapon.mastery,
+                                        )
+                                            ? 'Mastery active on character'
+                                            : 'Click to activate mastery'
+                                    "
+                                    @click="toggleWeaponMastery(weapon.mastery)"
+                                >
+                                    ★ Mastery: {{ weapon.mastery }}
+                                </button>
+                                <span
+                                    v-for="prop in weapon.properties"
+                                    :key="prop"
+                                    class="rounded-full border border-[#e3e3e0] px-2 py-0.5 text-[10px] text-[#706f6c] dark:border-[#3E3E3A] dark:text-[#A1A09A]"
+                                >
+                                    {{ prop }}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                    <div
+                        v-else
+                        class="mt-4 rounded-md border border-dashed border-[#e3e3e0] p-4 text-center text-xs text-[#706f6c] dark:border-[#3E3E3A] dark:text-[#A1A09A]"
+                    >
+                        No weapons in list. Use '+ Add Weapon from Compendium'
+                        to add weapons with auto-calculated attack rolls.
+                    </div>
+
+                    <!-- Additional Attack Notes -->
+                    <div
+                        class="mt-4 border-t border-[#e3e3e0] pt-3 dark:border-[#3E3E3A]"
+                    >
+                        <label
+                            class="block text-xs font-medium text-[#706f6c] dark:text-[#A1A09A]"
+                        >
+                            Additional Attack &amp; Action Notes
+                        </label>
+                        <textarea
+                            v-model="sheet.weapons_attacks"
+                            :disabled="!props.canEdit"
+                            rows="2"
+                            placeholder="Unarmed Strike (1 + STR mod damage), Grappling notes, bonus action off-hand rules..."
+                            class="mt-1.5 block w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] p-2.5 text-xs focus:border-[#1b1b18] focus:outline-none dark:border-[#3E3E3A] dark:bg-[#0a0a0a] dark:focus:border-[#EDEDEC]"
+                        />
+                    </div>
                 </section>
             </div>
 
@@ -2012,39 +2853,398 @@ function saveCharacter(): void {
                         </div>
                     </div>
 
-                    <!-- Spells Textbox (Quick Edit Always Active) -->
+                    <!-- Spells List Section -->
                     <div class="mt-5">
                         <div
                             class="flex flex-wrap items-center justify-between gap-2"
                         >
                             <div>
-                                <label class="block text-sm font-semibold">
-                                    Cantrips, Prepared Spells &amp; Spell Slots
-                                </label>
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <label class="block text-sm font-semibold">
+                                        Known &amp; Prepared Spells
+                                    </label>
+                                    <button
+                                        v-if="props.canEdit"
+                                        type="button"
+                                        class="inline-flex cursor-pointer items-center gap-1 rounded-xs border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1 text-xs font-medium hover:border-[#1b1b18] dark:border-[#3E3E3A] dark:bg-[#0a0a0a] dark:hover:border-[#EDEDEC]"
+                                        @click="openCompendium('spell')"
+                                    >
+                                        <span>+ Add Spell from Compendium</span>
+                                    </button>
+                                    <button
+                                        v-if="props.canEdit"
+                                        type="button"
+                                        class="inline-flex cursor-pointer items-center gap-1 rounded-xs border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1 text-xs font-medium text-[#706f6c] hover:border-[#1b1b18] hover:text-[#1b1b18] dark:border-[#3E3E3A] dark:bg-[#0a0a0a] dark:text-[#A1A09A] dark:hover:border-[#EDEDEC] dark:hover:text-[#EDEDEC]"
+                                        @click="
+                                            showCustomSpellForm =
+                                                !showCustomSpellForm
+                                        "
+                                    >
+                                        <span>{{
+                                            showCustomSpellForm
+                                                ? 'Cancel'
+                                                : '+ Custom Spell'
+                                        }}</span>
+                                    </button>
+                                </div>
                                 <p
                                     class="mt-0.5 text-xs text-[#706f6c] dark:text-[#A1A09A]"
                                 >
-                                    Track your cantrips, prepared spells, ritual
-                                    spells, and remaining spell slots.
+                                    Organized by spell level with
+                                    auto-calculated spell save DCs and attack
+                                    bonuses.
                                 </p>
                             </div>
-
-                            <button
-                                v-if="props.canEdit"
-                                type="button"
-                                class="inline-flex cursor-pointer items-center gap-1 rounded-xs border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1 text-xs font-medium hover:border-[#1b1b18] dark:border-[#3E3E3A] dark:bg-[#0a0a0a] dark:hover:border-[#EDEDEC]"
-                                @click="openCompendium('spell')"
-                            >
-                                <span>+ Add Spell from Compendium</span>
-                            </button>
                         </div>
-                        <textarea
-                            v-model="sheet.spells"
-                            :disabled="!props.canEdit"
-                            rows="8"
-                            placeholder="Cantrips: Fire Bolt, Mage Hand&#10;1st Level (4/4 slots): Shield, Magic Missile, Detect Magic..."
-                            class="mt-3 block w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] p-3 text-sm focus:border-[#1b1b18] focus:outline-none dark:border-[#3E3E3A] dark:bg-[#0a0a0a] dark:focus:border-[#EDEDEC]"
-                        />
+
+                        <!-- Custom Spell Form -->
+                        <div
+                            v-if="showCustomSpellForm && props.canEdit"
+                            class="mt-4 rounded-md border border-[#e3e3e0] bg-[#1b1b18]/[0.02] p-4 dark:border-[#3E3E3A] dark:bg-[#EDEDEC]/[0.02]"
+                        >
+                            <h3
+                                class="text-xs font-bold tracking-wider text-[#706f6c] uppercase dark:text-[#A1A09A]"
+                            >
+                                Add Custom Spell
+                            </h3>
+                            <div
+                                class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-4"
+                            >
+                                <div class="sm:col-span-2">
+                                    <label class="block text-xs font-medium"
+                                        >Spell Name</label
+                                    >
+                                    <input
+                                        v-model="customSpell.name"
+                                        type="text"
+                                        placeholder="e.g. Chaos Bolt"
+                                        class="mt-1 w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1.5 text-xs dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
+                                    />
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-medium"
+                                        >Level</label
+                                    >
+                                    <select
+                                        v-model.number="customSpell.level"
+                                        class="mt-1 w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2 py-1.5 text-xs dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
+                                    >
+                                        <option :value="0">Cantrip (0)</option>
+                                        <option
+                                            v-for="lvl in 9"
+                                            :key="lvl"
+                                            :value="lvl"
+                                        >
+                                            Level {{ lvl }}
+                                        </option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-medium"
+                                        >School</label
+                                    >
+                                    <input
+                                        v-model="customSpell.school"
+                                        type="text"
+                                        placeholder="Evocation"
+                                        class="mt-1 w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1.5 text-xs dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
+                                    />
+                                </div>
+                            </div>
+
+                            <div
+                                class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3"
+                            >
+                                <div>
+                                    <label class="block text-xs font-medium"
+                                        >Casting Time</label
+                                    >
+                                    <input
+                                        v-model="customSpell.casting_time"
+                                        type="text"
+                                        placeholder="1 Action"
+                                        class="mt-1 w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1.5 text-xs dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
+                                    />
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-medium"
+                                        >Range</label
+                                    >
+                                    <input
+                                        v-model="customSpell.range"
+                                        type="text"
+                                        placeholder="60 ft / Touch / Self"
+                                        class="mt-1 w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1.5 text-xs dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
+                                    />
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-medium"
+                                        >Duration</label
+                                    >
+                                    <input
+                                        v-model="customSpell.duration"
+                                        type="text"
+                                        placeholder="Instantaneous"
+                                        class="mt-1 w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1.5 text-xs dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
+                                    />
+                                </div>
+                            </div>
+
+                            <div class="mt-3">
+                                <label class="block text-xs font-medium"
+                                    >Summary / Effect</label
+                                >
+                                <input
+                                    v-model="customSpell.summary"
+                                    type="text"
+                                    placeholder="2d8+1d6 damage of random type..."
+                                    class="mt-1 w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1.5 text-xs dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
+                                />
+                            </div>
+
+                            <div class="mt-3 flex justify-end gap-2">
+                                <button
+                                    type="button"
+                                    class="rounded-xs px-2.5 py-1 text-xs text-[#706f6c] hover:text-[#1b1b18] dark:text-[#A1A09A]"
+                                    @click="showCustomSpellForm = false"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    class="rounded-xs bg-[#1b1b18] px-3 py-1 text-xs font-semibold text-white dark:bg-[#EDEDEC] dark:text-[#1b1b18]"
+                                    @click="addCustomSpell"
+                                >
+                                    Save Spell
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Spells List Grouped by Level -->
+                        <div
+                            v-if="sheet.spells_list.length > 0"
+                            class="mt-4 space-y-5"
+                        >
+                            <div
+                                v-for="group in groupedSpells"
+                                :key="group.level"
+                                class="space-y-2.5"
+                            >
+                                <div
+                                    class="flex items-center gap-2 border-b border-[#e3e3e0] pb-1.5 dark:border-[#3E3E3A]"
+                                >
+                                    <span
+                                        class="text-xs font-bold tracking-wider text-[#706f6c] uppercase dark:text-[#A1A09A]"
+                                    >
+                                        {{ group.label }}
+                                    </span>
+                                    <span
+                                        class="py-0.2 rounded-full bg-[#1b1b18]/5 px-2 text-[10px] font-semibold dark:bg-[#EDEDEC]/10"
+                                    >
+                                        {{ group.spells.length }}
+                                    </span>
+                                </div>
+
+                                <div class="space-y-2">
+                                    <div
+                                        v-for="spell in group.spells"
+                                        :key="spell.id"
+                                        class="rounded-md border border-[#e3e3e0] bg-[#FDFDFC] p-3.5 transition-colors sm:p-4 dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
+                                    >
+                                        <div
+                                            class="flex flex-wrap items-center justify-between gap-2"
+                                        >
+                                            <div
+                                                class="flex flex-wrap items-center gap-2"
+                                            >
+                                                <span
+                                                    class="text-sm font-bold sm:text-base"
+                                                >
+                                                    {{ spell.name }}
+                                                </span>
+                                                <span
+                                                    v-if="spell.school"
+                                                    class="rounded-full border border-[#e3e3e0] px-2 py-0.5 text-[11px] font-medium text-[#706f6c] dark:border-[#3E3E3A] dark:text-[#A1A09A]"
+                                                >
+                                                    {{ spell.school }}
+                                                </span>
+                                                <span
+                                                    v-if="spell.casting_time"
+                                                    class="rounded-full bg-[#1b1b18]/5 px-2 py-0.5 text-[11px] font-medium dark:bg-[#EDEDEC]/5"
+                                                >
+                                                    {{ spell.casting_time }}
+                                                </span>
+                                                <span
+                                                    v-if="spell.range"
+                                                    class="text-xs text-[#706f6c] dark:text-[#A1A09A]"
+                                                >
+                                                    {{ spell.range }}
+                                                </span>
+                                                <span
+                                                    v-if="spell.duration"
+                                                    class="text-xs text-[#706f6c] dark:text-[#A1A09A]"
+                                                >
+                                                    · {{ spell.duration }}
+                                                </span>
+                                            </div>
+
+                                            <div
+                                                class="flex items-center gap-2"
+                                            >
+                                                <button
+                                                    v-if="
+                                                        spell.level > 0 &&
+                                                        props.canEdit
+                                                    "
+                                                    type="button"
+                                                    class="cursor-pointer rounded-xs border px-2 py-0.5 text-xs font-semibold transition-colors"
+                                                    :class="
+                                                        spell.prepared
+                                                            ? 'border-indigo-500/40 bg-indigo-500/10 text-indigo-700 dark:text-indigo-400'
+                                                            : 'border-[#e3e3e0] text-[#706f6c] dark:border-[#3E3E3A] dark:text-[#A1A09A]'
+                                                    "
+                                                    @click="
+                                                        toggleSpellPrepared(
+                                                            spell,
+                                                        )
+                                                    "
+                                                >
+                                                    {{
+                                                        spell.prepared
+                                                            ? 'Prepared'
+                                                            : 'Unprepared'
+                                                    }}
+                                                </button>
+                                                <button
+                                                    v-if="props.canEdit"
+                                                    type="button"
+                                                    title="Remove spell"
+                                                    class="cursor-pointer rounded-xs p-1 text-xs text-[#706f6c] transition-colors hover:text-red-600 dark:text-[#A1A09A] dark:hover:text-red-400"
+                                                    @click="
+                                                        removeSpell(spell.id)
+                                                    "
+                                                >
+                                                    ✕
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        <!-- Dynamic Attack / Save Roll Tags -->
+                                        <div
+                                            v-if="
+                                                spell.attack_type ||
+                                                spell.save_ability ||
+                                                spell.damage
+                                            "
+                                            class="mt-2.5 flex flex-wrap items-center gap-2"
+                                        >
+                                            <span
+                                                v-if="spell.attack_type"
+                                                class="rounded-sm bg-[#1b1b18]/5 px-2.5 py-1 text-xs font-semibold text-[#1b1b18] dark:bg-[#EDEDEC]/5 dark:text-[#EDEDEC]"
+                                            >
+                                                Spell Attack:
+                                                {{
+                                                    spellAttackBonus !== null
+                                                        ? formatSigned(
+                                                              spellAttackBonus,
+                                                          )
+                                                        : '+0'
+                                                }}
+                                                to hit
+                                            </span>
+                                            <span
+                                                v-if="spell.save_ability"
+                                                class="rounded-sm bg-[#1b1b18]/5 px-2.5 py-1 text-xs font-semibold text-[#1b1b18] dark:bg-[#EDEDEC]/5 dark:text-[#EDEDEC]"
+                                            >
+                                                Save: DC
+                                                {{
+                                                    spellSaveDc !== null
+                                                        ? spellSaveDc
+                                                        : '10'
+                                                }}
+                                                {{
+                                                    spell.save_ability.toUpperCase()
+                                                }}
+                                            </span>
+                                            <span
+                                                v-if="spell.damage"
+                                                class="rounded-sm border border-[#e3e3e0] px-2.5 py-1 text-xs font-medium dark:border-[#3E3E3A]"
+                                            >
+                                                {{ spell.damage }}
+                                                {{ spell.damage_type }}
+                                            </span>
+                                        </div>
+
+                                        <!-- Summary & Description Expander -->
+                                        <div
+                                            class="mt-2 text-xs text-[#706f6c] dark:text-[#A1A09A]"
+                                        >
+                                            <p v-if="spell.summary">
+                                                {{ spell.summary }}
+                                            </p>
+                                            <div
+                                                v-if="spell.description"
+                                                class="mt-1"
+                                            >
+                                                <button
+                                                    type="button"
+                                                    class="cursor-pointer text-[11px] font-medium text-[#1b1b18] underline hover:opacity-80 dark:text-[#EDEDEC]"
+                                                    @click="
+                                                        toggleSpellExpand(
+                                                            spell.id,
+                                                        )
+                                                    "
+                                                >
+                                                    {{
+                                                        expandedSpellIds.includes(
+                                                            spell.id,
+                                                        )
+                                                            ? '▲ Hide Details'
+                                                            : '▼ Read Full Description'
+                                                    }}
+                                                </button>
+                                                <p
+                                                    v-if="
+                                                        expandedSpellIds.includes(
+                                                            spell.id,
+                                                        )
+                                                    "
+                                                    class="mt-2 rounded-xs border border-[#e3e3e0] bg-[#1b1b18]/[0.02] p-2.5 text-xs leading-relaxed text-[#1b1b18] dark:border-[#3E3E3A] dark:bg-[#EDEDEC]/[0.02] dark:text-[#EDEDEC]"
+                                                >
+                                                    {{ spell.description }}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div
+                            v-else
+                            class="mt-4 rounded-md border border-dashed border-[#e3e3e0] p-4 text-center text-xs text-[#706f6c] dark:border-[#3E3E3A] dark:text-[#A1A09A]"
+                        >
+                            No spells in list. Use '+ Add Spell from Compendium'
+                            to choose Cantrips and 1st-level spells.
+                        </div>
+
+                        <!-- Additional Spell Notes -->
+                        <div
+                            class="mt-4 border-t border-[#e3e3e0] pt-3 dark:border-[#3E3E3A]"
+                        >
+                            <label
+                                class="block text-xs font-medium text-[#706f6c] dark:text-[#A1A09A]"
+                            >
+                                Additional Spell Notes, Spell Slots &amp;
+                                Rituals
+                            </label>
+                            <textarea
+                                v-model="sheet.spells"
+                                :disabled="!props.canEdit"
+                                rows="3"
+                                placeholder="Spell slots used/total (e.g. 1st: 3/4), ritual caster notes, spell scroll inventory..."
+                                class="mt-1.5 block w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] p-2.5 text-xs focus:border-[#1b1b18] focus:outline-none dark:border-[#3E3E3A] dark:bg-[#0a0a0a] dark:focus:border-[#EDEDEC]"
+                            />
+                        </div>
                     </div>
                 </section>
             </div>
@@ -2096,33 +3296,241 @@ function saveCharacter(): void {
                         class="flex flex-wrap items-center justify-between gap-2"
                     >
                         <div>
-                            <h2 class="text-base font-semibold">
-                                Inventory, Magic Items &amp; Adventuring Gear
-                            </h2>
+                            <div class="flex flex-wrap items-center gap-2">
+                                <h2 class="text-base font-semibold">
+                                    Inventory, Magic Items &amp; Adventuring
+                                    Gear
+                                </h2>
+                                <button
+                                    v-if="props.canEdit"
+                                    type="button"
+                                    class="inline-flex cursor-pointer items-center gap-1 rounded-xs border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1 text-xs font-medium hover:border-[#1b1b18] dark:border-[#3E3E3A] dark:bg-[#0a0a0a] dark:hover:border-[#EDEDEC]"
+                                    @click="openCompendium('gear')"
+                                >
+                                    <span>+ Add Gear from Compendium</span>
+                                </button>
+                                <button
+                                    v-if="props.canEdit"
+                                    type="button"
+                                    class="inline-flex cursor-pointer items-center gap-1 rounded-xs border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1 text-xs font-medium text-[#706f6c] hover:border-[#1b1b18] hover:text-[#1b1b18] dark:border-[#3E3E3A] dark:bg-[#0a0a0a] dark:text-[#A1A09A] dark:hover:border-[#EDEDEC] dark:hover:text-[#EDEDEC]"
+                                    @click="
+                                        showCustomItemForm = !showCustomItemForm
+                                    "
+                                >
+                                    <span>{{
+                                        showCustomItemForm
+                                            ? 'Cancel'
+                                            : '+ Custom Item'
+                                    }}</span>
+                                </button>
+                            </div>
                             <p
                                 class="mt-0.5 text-xs text-[#706f6c] dark:text-[#A1A09A]"
                             >
-                                Backpack contents, potions, magic items, attuned
-                                items, and treasure.
+                                Track quantities of adventuring gear, potions,
+                                and treasure items with quick stepper controls.
                             </p>
                         </div>
-
-                        <button
-                            v-if="props.canEdit"
-                            type="button"
-                            class="inline-flex cursor-pointer items-center gap-1 rounded-xs border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1 text-xs font-medium hover:border-[#1b1b18] dark:border-[#3E3E3A] dark:bg-[#0a0a0a] dark:hover:border-[#EDEDEC]"
-                            @click="openCompendium('gear')"
-                        >
-                            <span>+ Add Gear from Compendium</span>
-                        </button>
                     </div>
-                    <textarea
-                        v-model="sheet.equipment"
-                        :disabled="!props.canEdit"
-                        rows="8"
-                        placeholder="Explorer's Pack, 50 ft Hempen Rope, 2x Potion of Healing, Bag of Holding..."
-                        class="mt-3 block w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] p-3 text-sm focus:border-[#1b1b18] focus:outline-none dark:border-[#3E3E3A] dark:bg-[#0a0a0a] dark:focus:border-[#EDEDEC]"
-                    />
+
+                    <!-- Custom Item Form -->
+                    <div
+                        v-if="showCustomItemForm && props.canEdit"
+                        class="mt-4 rounded-md border border-[#e3e3e0] bg-[#1b1b18]/[0.02] p-4 dark:border-[#3E3E3A] dark:bg-[#EDEDEC]/[0.02]"
+                    >
+                        <h3
+                            class="text-xs font-bold tracking-wider text-[#706f6c] uppercase dark:text-[#A1A09A]"
+                        >
+                            Add Custom Item
+                        </h3>
+                        <div class="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-4">
+                            <div class="sm:col-span-2">
+                                <label class="block text-xs font-medium"
+                                    >Item Name</label
+                                >
+                                <input
+                                    v-model="customItem.name"
+                                    type="text"
+                                    placeholder="e.g. Mysterious Sapphire Ring"
+                                    class="mt-1 w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1.5 text-xs dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
+                                />
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium"
+                                    >Quantity</label
+                                >
+                                <input
+                                    v-model.number="customItem.quantity"
+                                    type="number"
+                                    min="1"
+                                    class="mt-1 w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1.5 text-center text-xs dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
+                                />
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium"
+                                    >Weight</label
+                                >
+                                <input
+                                    v-model="customItem.weight"
+                                    type="text"
+                                    placeholder="e.g. 1 lb"
+                                    class="mt-1 w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1.5 text-xs dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
+                                />
+                            </div>
+                        </div>
+
+                        <div class="mt-3">
+                            <label class="block text-xs font-medium"
+                                >Summary / Description</label
+                            >
+                            <input
+                                v-model="customItem.summary"
+                                type="text"
+                                placeholder="Glows softly in darkness, found in goblin cave..."
+                                class="mt-1 w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1.5 text-xs dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
+                            />
+                        </div>
+
+                        <div class="mt-3 flex justify-end gap-2">
+                            <button
+                                type="button"
+                                class="rounded-xs px-2.5 py-1 text-xs text-[#706f6c] hover:text-[#1b1b18] dark:text-[#A1A09A]"
+                                @click="showCustomItemForm = false"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                class="rounded-xs bg-[#1b1b18] px-3 py-1 text-xs font-semibold text-white dark:bg-[#EDEDEC] dark:text-[#1b1b18]"
+                                @click="addCustomItem"
+                            >
+                                Save Item
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Inventory Items List Cards -->
+                    <div
+                        v-if="sheet.inventory_list.length > 0"
+                        class="mt-4 space-y-2"
+                    >
+                        <div
+                            v-for="item in sheet.inventory_list"
+                            :key="item.id"
+                            class="flex flex-col justify-between gap-3 rounded-md border border-[#e3e3e0] bg-[#FDFDFC] p-3 transition-colors sm:flex-row sm:items-center dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
+                        >
+                            <div class="flex-1">
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <span class="text-sm font-semibold">
+                                        {{ item.name }}
+                                    </span>
+                                    <span
+                                        v-if="item.weight"
+                                        class="rounded-full border border-[#e3e3e0] px-2 py-0.5 text-[10px] text-[#706f6c] dark:border-[#3E3E3A] dark:text-[#A1A09A]"
+                                    >
+                                        {{ item.weight }}
+                                    </span>
+                                </div>
+                                <p
+                                    v-if="item.summary"
+                                    class="mt-0.5 text-xs text-[#706f6c] dark:text-[#A1A09A]"
+                                >
+                                    {{ item.summary }}
+                                </p>
+                                <div v-if="item.description" class="mt-1">
+                                    <button
+                                        type="button"
+                                        class="cursor-pointer text-[11px] font-medium text-[#1b1b18] underline hover:opacity-80 dark:text-[#EDEDEC]"
+                                        @click="toggleItemExpand(item.id)"
+                                    >
+                                        {{
+                                            expandedItemIds.includes(item.id)
+                                                ? '▲ Hide Details'
+                                                : '▼ Read Details'
+                                        }}
+                                    </button>
+                                    <p
+                                        v-if="expandedItemIds.includes(item.id)"
+                                        class="mt-1.5 rounded-xs border border-[#e3e3e0] bg-[#1b1b18]/[0.02] p-2 text-xs leading-relaxed dark:border-[#3E3E3A] dark:bg-[#EDEDEC]/[0.02]"
+                                    >
+                                        {{ item.description }}
+                                    </p>
+                                </div>
+                            </div>
+
+                            <!-- Quantity Stepper & Delete -->
+                            <div
+                                class="flex items-center gap-3 self-end sm:self-center"
+                            >
+                                <div
+                                    class="flex items-center rounded-sm border border-[#e3e3e0] bg-white dark:border-[#3E3E3A] dark:bg-[#161615]"
+                                >
+                                    <button
+                                        type="button"
+                                        :disabled="
+                                            !props.canEdit || item.quantity <= 1
+                                        "
+                                        class="flex h-7 w-7 items-center justify-center text-xs font-bold text-[#706f6c] transition-colors hover:bg-[#1b1b18]/5 disabled:opacity-30 dark:text-[#A1A09A] dark:hover:bg-[#EDEDEC]/5"
+                                        @click="
+                                            changeInventoryQuantity(item, -1)
+                                        "
+                                    >
+                                        −
+                                    </button>
+                                    <span
+                                        class="min-w-[28px] text-center text-xs font-bold"
+                                    >
+                                        {{ item.quantity }}
+                                    </span>
+                                    <button
+                                        type="button"
+                                        :disabled="!props.canEdit"
+                                        class="flex h-7 w-7 items-center justify-center text-xs font-bold text-[#706f6c] transition-colors hover:bg-[#1b1b18]/5 disabled:opacity-30 dark:text-[#A1A09A] dark:hover:bg-[#EDEDEC]/5"
+                                        @click="
+                                            changeInventoryQuantity(item, 1)
+                                        "
+                                    >
+                                        +
+                                    </button>
+                                </div>
+
+                                <button
+                                    v-if="props.canEdit"
+                                    type="button"
+                                    title="Remove item"
+                                    class="cursor-pointer rounded-xs p-1 text-xs text-[#706f6c] transition-colors hover:text-red-600 dark:text-[#A1A09A] dark:hover:text-red-400"
+                                    @click="removeInventoryItem(item.id)"
+                                >
+                                    ✕
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div
+                        v-else
+                        class="mt-4 rounded-md border border-dashed border-[#e3e3e0] p-4 text-center text-xs text-[#706f6c] dark:border-[#3E3E3A] dark:text-[#A1A09A]"
+                    >
+                        No gear in list. Use '+ Add Gear from Compendium' or '+
+                        Custom Item' to track items.
+                    </div>
+
+                    <!-- Additional Inventory Notes -->
+                    <div
+                        class="mt-4 border-t border-[#e3e3e0] pt-3 dark:border-[#3E3E3A]"
+                    >
+                        <label
+                            class="block text-xs font-medium text-[#706f6c] dark:text-[#A1A09A]"
+                        >
+                            Additional Inventory &amp; Backpack Notes
+                        </label>
+                        <textarea
+                            v-model="sheet.equipment"
+                            :disabled="!props.canEdit"
+                            rows="3"
+                            placeholder="Explorer's Pack details, Bag of Holding contents, treasure gems, mount equipment..."
+                            class="mt-1.5 block w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] p-2.5 text-xs focus:border-[#1b1b18] focus:outline-none dark:border-[#3E3E3A] dark:bg-[#0a0a0a] dark:focus:border-[#EDEDEC]"
+                        />
+                    </div>
                 </section>
             </div>
 
