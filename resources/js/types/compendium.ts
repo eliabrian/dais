@@ -6,7 +6,10 @@ export type CompendiumType =
     | 'species'
     | 'class'
     | 'background'
-    | 'feat';
+    | 'feat'
+    | 'feature'
+    | 'trait'
+    | 'language';
 
 export interface CompendiumEntry {
     id: string;

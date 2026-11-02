@@ -56,6 +56,51 @@ test('user can create a dnd 2024 character and view sheet', function () {
     $response->assertRedirect(route('characters.show', $character));
 });
 
+test('user can create a character via the multi-step wizard with full sheet_data', function () {
+    $user = User::factory()->create();
+
+    $response = $this->actingAs($user)->post(route('characters.store'), [
+        'name' => 'Kaelen Dawnbringer',
+        'species' => 'Elf (Wood Elf)',
+        'class' => 'Ranger',
+        'background' => 'Guide',
+        'level' => 1,
+        'sheet_data' => [
+            'species' => 'Elf (Wood Elf)',
+            'class' => 'Ranger',
+            'background' => 'Guide',
+            'origin_feat' => 'Magic Initiate (Druid)',
+            'level' => 1,
+            'speed' => 35,
+            'armor_class' => 15,
+            'hp' => ['current' => 12, 'max' => 12, 'temp' => 0],
+            'abilities' => ['str' => 12, 'dex' => 16, 'con' => 14, 'int' => 10, 'wis' => 16, 'cha' => 8],
+            'saving_throws' => ['str', 'dex'],
+            'skills' => [
+                'perception' => 'proficient',
+                'stealth' => 'proficient',
+                'survival' => 'proficient',
+            ],
+            'weapon_masteries' => ['Vex', 'Nick'],
+            'features_traits' => 'Wanderer, Magic Initiate (Druid), Favored Enemy',
+            'proficiencies' => 'Light Armor, Medium Armor, Shields, Simple & Martial Weapons',
+        ],
+    ]);
+
+    $character = Character::where('user_id', $user->id)->first();
+
+    expect($character)->not->toBeNull();
+    expect($character->name)->toBe('Kaelen Dawnbringer');
+    expect($character->sheet_data['origin_feat'])->toBe('Magic Initiate (Druid)');
+    expect($character->sheet_data['speed'])->toBe(35);
+    expect($character->sheet_data['abilities']['dex'])->toBe(16);
+    expect($character->sheet_data['abilities']['wis'])->toBe(16);
+    expect($character->sheet_data['skills']['stealth'])->toBe('proficient');
+    expect($character->sheet_data['weapon_masteries'])->toContain('Vex');
+
+    $response->assertRedirect(route('characters.show', $character));
+});
+
 test('user can update their character sheet data', function () {
     $user = User::factory()->create();
 

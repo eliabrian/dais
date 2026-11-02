@@ -53,6 +53,7 @@ class CharacterController extends Controller
             'class' => ['nullable', 'string', 'max:100'],
             'background' => ['nullable', 'string', 'max:100'],
             'level' => ['nullable', 'integer', 'min:1', 'max:20'],
+            'sheet_data' => ['nullable', 'array'],
         ]);
 
         if (! empty($validated['campaign_id']) && ! $this->userBelongsToCampaign($user, $validated['campaign_id'])) {
@@ -68,7 +69,23 @@ class CharacterController extends Controller
                 ['name' => 'D&D 5.5E (2024) SRD'],
             );
 
-        $level = (int) ($validated['level'] ?? 1);
+        $level = (int) ($validated['level'] ?? ($validated['sheet_data']['level'] ?? 1));
+
+        $defaultSheet = $this->defaultDnd2024SheetData(
+            species: $validated['species'] ?? ($validated['sheet_data']['species'] ?? 'Human'),
+            className: $validated['class'] ?? ($validated['sheet_data']['class'] ?? 'Fighter'),
+            background: $validated['background'] ?? ($validated['sheet_data']['background'] ?? 'Soldier'),
+            level: $level,
+        );
+
+        $customSheet = $validated['sheet_data'] ?? [];
+        $mergedSheet = array_replace($defaultSheet, $customSheet);
+
+        foreach (['hp', 'hit_dice', 'death_saves', 'abilities', 'coins'] as $nestedKey) {
+            if (isset($customSheet[$nestedKey]) && is_array($customSheet[$nestedKey])) {
+                $mergedSheet[$nestedKey] = array_replace($defaultSheet[$nestedKey], $customSheet[$nestedKey]);
+            }
+        }
 
         $character = Character::create([
             'user_id' => $user->id,
@@ -76,12 +93,7 @@ class CharacterController extends Controller
             'system_id' => $system->id,
             'name' => $validated['name'],
             'avatar_url' => ($validated['avatar_url'] ?? null) ?: null,
-            'sheet_data' => $this->defaultDnd2024SheetData(
-                species: $validated['species'] ?? 'Human',
-                className: $validated['class'] ?? 'Fighter',
-                background: $validated['background'] ?? 'Soldier',
-                level: $level,
-            ),
+            'sheet_data' => $mergedSheet,
         ]);
 
         return redirect()->route('characters.show', $character);
@@ -231,6 +243,10 @@ class CharacterController extends Controller
             'armors_list' => [],
             'spells_list' => [],
             'inventory_list' => [],
+            'features_list' => [],
+            'traits_list' => [],
+            'feats_list' => [],
+            'languages_list' => [],
             'weapons_attacks' => '',
             'armor_equipped' => '',
             'features_traits' => '',

@@ -20,9 +20,13 @@ class DatabaseSeeder extends Seeder
             CompendiumEntrySeeder::class,
         ]);
 
-        User::factory()->create([
-            'username' => 'testuser',
-            'email' => 'test@example.com',
-        ]);
+        User::firstOrCreate(
+            ['email' => 'test@example.com'],
+            [
+                'username' => 'testuser',
+                'name' => 'Test User',
+                'password' => bcrypt('password'),
+            ]
+        );
     }
 }

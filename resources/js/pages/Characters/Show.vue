@@ -14,8 +14,12 @@ import type {
     CompendiumEntry,
     CompendiumType,
     SheetArmorItem,
+    SheetFeatItem,
+    SheetFeatureItem,
     SheetInventoryItem,
+    SheetLanguageItem,
     SheetSpellItem,
+    SheetTraitItem,
     SheetWeaponItem,
     SkillProficiency,
 } from '@/types';
@@ -132,6 +136,18 @@ const sheet = reactive({
     inventory_list: Array.isArray(sd.inventory_list)
         ? ([...sd.inventory_list] as SheetInventoryItem[])
         : ([] as SheetInventoryItem[]),
+    features_list: Array.isArray(sd.features_list)
+        ? ([...sd.features_list] as SheetFeatureItem[])
+        : ([] as SheetFeatureItem[]),
+    traits_list: Array.isArray(sd.traits_list)
+        ? ([...sd.traits_list] as SheetTraitItem[])
+        : ([] as SheetTraitItem[]),
+    feats_list: Array.isArray(sd.feats_list)
+        ? ([...sd.feats_list] as SheetFeatItem[])
+        : ([] as SheetFeatItem[]),
+    languages_list: Array.isArray(sd.languages_list)
+        ? ([...sd.languages_list] as SheetLanguageItem[])
+        : ([] as SheetLanguageItem[]),
     equipment: sd.equipment ?? '',
     spellcasting_ability: (sd.spellcasting_ability ?? 'none') as
         | 'none'
@@ -714,6 +730,148 @@ function addCustomItem(): void {
     flashNotice('Added custom item!');
 }
 
+// Custom Feature
+const showCustomFeatureForm = ref(false);
+const customFeature = reactive({
+    name: '',
+    source: 'class' as 'class' | 'background' | 'subclass' | 'other',
+    level: 1,
+    summary: '',
+    description: '',
+});
+function addCustomFeature(): void {
+    if (!props.canEdit || !customFeature.name.trim()) {
+        return;
+    }
+    sheet.features_list.push({
+        id: generateId(),
+        name: customFeature.name.trim(),
+        source: customFeature.source,
+        level: Number(customFeature.level || 1),
+        summary: customFeature.summary.trim(),
+        description:
+            customFeature.description.trim() || customFeature.summary.trim(),
+    });
+    customFeature.name = '';
+    customFeature.summary = '';
+    customFeature.description = '';
+    showCustomFeatureForm.value = false;
+    flashNotice('Added custom feature!');
+}
+function removeFeature(id: string): void {
+    if (!props.canEdit) {
+        return;
+    }
+    const idx = sheet.features_list.findIndex((f) => f.id === id);
+    if (idx !== -1) {
+        sheet.features_list.splice(idx, 1);
+    }
+}
+
+// Custom Trait
+const showCustomTraitForm = ref(false);
+const customTrait = reactive({
+    name: '',
+    species_name: '',
+    summary: '',
+    description: '',
+});
+function addCustomTrait(): void {
+    if (!props.canEdit || !customTrait.name.trim()) {
+        return;
+    }
+    sheet.traits_list.push({
+        id: generateId(),
+        name: customTrait.name.trim(),
+        species_name: customTrait.species_name.trim(),
+        summary: customTrait.summary.trim(),
+        description:
+            customTrait.description.trim() || customTrait.summary.trim(),
+    });
+    customTrait.name = '';
+    customTrait.species_name = '';
+    customTrait.summary = '';
+    customTrait.description = '';
+    showCustomTraitForm.value = false;
+    flashNotice('Added custom trait!');
+}
+function removeTrait(id: string): void {
+    if (!props.canEdit) {
+        return;
+    }
+    const idx = sheet.traits_list.findIndex((t) => t.id === id);
+    if (idx !== -1) {
+        sheet.traits_list.splice(idx, 1);
+    }
+}
+
+// Custom Feat
+const showCustomFeatForm = ref(false);
+const customFeat = reactive({
+    name: '',
+    category: 'Origin' as 'Origin' | 'General' | 'Fighting Style' | 'Epic Boon',
+    summary: '',
+    description: '',
+});
+function addCustomFeat(): void {
+    if (!props.canEdit || !customFeat.name.trim()) {
+        return;
+    }
+    sheet.feats_list.push({
+        id: generateId(),
+        name: customFeat.name.trim(),
+        category: customFeat.category,
+        summary: customFeat.summary.trim(),
+        description: customFeat.description.trim() || customFeat.summary.trim(),
+    });
+    customFeat.name = '';
+    customFeat.summary = '';
+    customFeat.description = '';
+    showCustomFeatForm.value = false;
+    flashNotice('Added custom feat!');
+}
+function removeFeat(id: string): void {
+    if (!props.canEdit) {
+        return;
+    }
+    const idx = sheet.feats_list.findIndex((f) => f.id === id);
+    if (idx !== -1) {
+        sheet.feats_list.splice(idx, 1);
+    }
+}
+
+// Custom Language
+const showCustomLanguageForm = ref(false);
+const customLanguage = reactive({
+    name: '',
+    script: '',
+    type: 'Standard' as 'Standard' | 'Exotic' | 'Secret',
+});
+function addCustomLanguage(): void {
+    if (!props.canEdit || !customLanguage.name.trim()) {
+        return;
+    }
+    sheet.languages_list.push({
+        id: generateId(),
+        name: customLanguage.name.trim(),
+        script: customLanguage.script.trim(),
+        type: customLanguage.type,
+    });
+    customLanguage.name = '';
+    customLanguage.script = '';
+    showCustomLanguageForm.value = false;
+    flashNotice('Added custom language!');
+}
+function removeLanguage(id: string): void {
+    if (!props.canEdit) {
+        return;
+    }
+    const idx = sheet.languages_list.findIndex((l) => l.id === id);
+    if (idx !== -1) {
+        sheet.languages_list.splice(idx, 1);
+    }
+}
+
 function addCompendiumEntry(entry: CompendiumEntry): void {
     if (!props.canEdit) {
         return;
@@ -822,6 +980,68 @@ function addCompendiumEntry(entry: CompendiumEntry): void {
             sheet.inventory_list.push(newItem);
         }
         flashNotice(`Added ${entry.name} to inventory!`);
+    } else if (entry.type === 'feature') {
+        const newFeature: SheetFeatureItem = {
+            id: generateId(),
+            compendium_id: entry.id,
+            name: entry.name,
+            source: (entry.data?.source as string) || 'class',
+            level:
+                entry.data?.level !== undefined
+                    ? Number(entry.data.level)
+                    : undefined,
+            summary: entry.summary || '',
+            description: entry.description || '',
+        };
+        sheet.features_list.push(newFeature);
+        flashNotice(`Added ${entry.name} to features!`);
+    } else if (entry.type === 'trait') {
+        const newTrait: SheetTraitItem = {
+            id: generateId(),
+            compendium_id: entry.id,
+            name: entry.name,
+            species_name:
+                (entry.data?.species as string) ||
+                (entry.data?.species_name as string) ||
+                '',
+            summary: entry.summary || '',
+            description: entry.description || '',
+        };
+        sheet.traits_list.push(newTrait);
+        flashNotice(`Added ${entry.name} to species traits!`);
+    } else if (entry.type === 'feat') {
+        const newFeat: SheetFeatItem = {
+            id: generateId(),
+            compendium_id: entry.id,
+            name: entry.name,
+            category: (entry.data?.category as string) || 'Origin',
+            summary: entry.summary || '',
+            description: entry.description || '',
+            benefits: Array.isArray(entry.data?.benefits)
+                ? [...entry.data.benefits]
+                : [],
+        };
+        sheet.feats_list.push(newFeat);
+        flashNotice(`Added ${entry.name} to feats!`);
+    } else if (entry.type === 'language') {
+        const newLang: SheetLanguageItem = {
+            id: generateId(),
+            compendium_id: entry.id,
+            name: entry.name,
+            script: (entry.data?.script as string) || '',
+            type: (entry.data?.type as string) || 'Standard',
+        };
+        sheet.languages_list.push(newLang);
+        flashNotice(`Added ${entry.name} to languages!`);
+    } else if (entry.type === 'class') {
+        sheet.class = entry.name;
+        flashNotice(`Set class to ${entry.name}!`);
+    } else if (entry.type === 'species') {
+        sheet.species = entry.name;
+        flashNotice(`Set species to ${entry.name}!`);
+    } else if (entry.type === 'background') {
+        sheet.background = entry.name;
+        flashNotice(`Set background to ${entry.name}!`);
     }
 }
 
@@ -851,6 +1071,10 @@ function saveCharacter(): void {
                 armors_list: [...sheet.armors_list],
                 spells_list: [...sheet.spells_list],
                 inventory_list: [...sheet.inventory_list],
+                features_list: [...sheet.features_list],
+                traits_list: [...sheet.traits_list],
+                feats_list: [...sheet.feats_list],
+                languages_list: [...sheet.languages_list],
                 coins: { ...sheet.coins },
             },
         },
@@ -2100,25 +2324,809 @@ function saveCharacter(): void {
                     </div>
                 </section>
 
-                <!-- Features & Proficiencies (Quick Edit Always Active) -->
+                <!-- 1. Class & Subclass Features -->
+                <section
+                    class="rounded-lg bg-white p-5 shadow-[inset_0px_0px_0px_1px_rgba(26,26,0,0.16)] sm:p-6 dark:bg-[#161615] dark:shadow-[inset_0px_0px_0px_1px_#fffaed2d]"
+                >
+                    <div
+                        class="flex flex-col justify-between gap-3 sm:flex-row sm:items-center"
+                    >
+                        <div>
+                            <div class="flex flex-wrap items-center gap-2">
+                                <h2 class="text-base font-semibold">
+                                    Class &amp; Subclass Features
+                                </h2>
+                                <span
+                                    class="rounded-full bg-[#1b1b18]/10 px-2 py-0.5 text-xs font-semibold dark:bg-[#EDEDEC]/10"
+                                >
+                                    {{ sheet.features_list.length }}
+                                </span>
+                                <button
+                                    v-if="props.canEdit"
+                                    type="button"
+                                    class="inline-flex cursor-pointer items-center gap-1 rounded-xs border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1 text-xs font-medium hover:border-[#1b1b18] dark:border-[#3E3E3A] dark:bg-[#0a0a0a] dark:hover:border-[#EDEDEC]"
+                                    @click="openCompendium('feature')"
+                                >
+                                    <span>+ Add Feature from Compendium</span>
+                                </button>
+                                <button
+                                    v-if="props.canEdit"
+                                    type="button"
+                                    class="inline-flex cursor-pointer items-center gap-1 rounded-xs border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1 text-xs font-medium text-[#706f6c] hover:border-[#1b1b18] hover:text-[#1b1b18] dark:border-[#3E3E3A] dark:bg-[#0a0a0a] dark:text-[#A1A09A] dark:hover:border-[#EDEDEC] dark:hover:text-[#EDEDEC]"
+                                    @click="
+                                        showCustomFeatureForm =
+                                            !showCustomFeatureForm
+                                    "
+                                >
+                                    <span>{{
+                                        showCustomFeatureForm
+                                            ? 'Cancel'
+                                            : '+ Custom Feature'
+                                    }}</span>
+                                </button>
+                            </div>
+                            <p
+                                class="mt-0.5 text-xs text-[#706f6c] dark:text-[#A1A09A]"
+                            >
+                                Core class features, subclass milestones, and
+                                special abilities.
+                            </p>
+                        </div>
+                    </div>
+
+                    <!-- Custom Feature Form -->
+                    <div
+                        v-if="showCustomFeatureForm"
+                        class="mt-4 rounded-md border border-[#e3e3e0] bg-[#FDFDFC] p-4 dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
+                    >
+                        <h4
+                            class="text-xs font-semibold tracking-wider text-[#706f6c] uppercase dark:text-[#A1A09A]"
+                        >
+                            Add Custom Feature
+                        </h4>
+                        <div class="mt-3 grid gap-3 sm:grid-cols-3">
+                            <div class="sm:col-span-2">
+                                <label class="block text-xs font-medium">
+                                    Feature Name
+                                </label>
+                                <input
+                                    v-model="customFeature.name"
+                                    type="text"
+                                    placeholder="e.g. Action Surge"
+                                    class="mt-1 w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1.5 text-xs dark:border-[#3E3E3A] dark:bg-[#161615]"
+                                />
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium"
+                                    >Source</label
+                                >
+                                <select
+                                    v-model="customFeature.source"
+                                    class="mt-1 w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1.5 text-xs dark:border-[#3E3E3A] dark:bg-[#161615]"
+                                >
+                                    <option value="class">Class</option>
+                                    <option value="subclass">Subclass</option>
+                                    <option value="background">
+                                        Background
+                                    </option>
+                                    <option value="other">Other</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium">
+                                    Level Requirement
+                                </label>
+                                <input
+                                    v-model.number="customFeature.level"
+                                    type="number"
+                                    min="1"
+                                    max="20"
+                                    class="mt-1 w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1.5 text-xs dark:border-[#3E3E3A] dark:bg-[#161615]"
+                                />
+                            </div>
+                            <div class="sm:col-span-2">
+                                <label class="block text-xs font-medium">
+                                    Short Summary
+                                </label>
+                                <input
+                                    v-model="customFeature.summary"
+                                    type="text"
+                                    placeholder="e.g. Take one additional action on your turn (1/Short Rest)"
+                                    class="mt-1 w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1.5 text-xs dark:border-[#3E3E3A] dark:bg-[#161615]"
+                                />
+                            </div>
+                            <div class="sm:col-span-3">
+                                <label class="block text-xs font-medium">
+                                    Description
+                                </label>
+                                <textarea
+                                    v-model="customFeature.description"
+                                    rows="2"
+                                    placeholder="Full details of how this feature functions..."
+                                    class="mt-1 w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1.5 text-xs dark:border-[#3E3E3A] dark:bg-[#161615]"
+                                />
+                            </div>
+                        </div>
+                        <div class="mt-3 flex justify-end gap-2">
+                            <button
+                                type="button"
+                                class="rounded-xs px-2.5 py-1 text-xs text-[#706f6c] hover:text-[#1b1b18] dark:text-[#A1A09A]"
+                                @click="showCustomFeatureForm = false"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                class="rounded-xs bg-[#1b1b18] px-3 py-1 text-xs font-semibold text-white dark:bg-[#EDEDEC] dark:text-[#1b1b18]"
+                                @click="addCustomFeature"
+                            >
+                                Save to List
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Features List -->
+                    <div
+                        v-if="sheet.features_list.length > 0"
+                        class="mt-4 grid gap-3 sm:grid-cols-2"
+                    >
+                        <div
+                            v-for="feature in sheet.features_list"
+                            :key="feature.id"
+                            class="flex flex-col justify-between rounded-md border border-[#e3e3e0] bg-[#FDFDFC] p-3.5 transition-colors dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
+                        >
+                            <div>
+                                <div
+                                    class="flex items-start justify-between gap-2"
+                                >
+                                    <div
+                                        class="flex flex-wrap items-center gap-1.5"
+                                    >
+                                        <h4 class="text-sm font-semibold">
+                                            {{ feature.name }}
+                                        </h4>
+                                        <span
+                                            class="rounded-xs border border-[#e3e3e0] px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-[#706f6c] uppercase dark:border-[#3E3E3A] dark:text-[#A1A09A]"
+                                        >
+                                            {{ feature.source || 'Class' }}
+                                        </span>
+                                        <span
+                                            v-if="feature.level"
+                                            class="rounded-xs bg-[#1b1b18]/5 px-1.5 py-0.5 text-[10px] font-medium text-[#706f6c] dark:bg-[#EDEDEC]/10 dark:text-[#A1A09A]"
+                                        >
+                                            Lvl {{ feature.level }}
+                                        </span>
+                                    </div>
+                                    <button
+                                        v-if="props.canEdit"
+                                        type="button"
+                                        title="Remove feature"
+                                        class="cursor-pointer rounded-xs p-1 text-xs text-[#706f6c] transition-colors hover:text-red-600 dark:text-[#A1A09A] dark:hover:text-red-400"
+                                        @click="removeFeature(feature.id)"
+                                    >
+                                        <span class="sr-only">Delete</span>
+                                        <svg
+                                            class="h-3.5 w-3.5"
+                                            fill="none"
+                                            viewBox="0 0 24 24"
+                                            stroke="currentColor"
+                                        >
+                                            <path
+                                                stroke-linecap="round"
+                                                stroke-linejoin="round"
+                                                stroke-width="2"
+                                                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                                            />
+                                        </svg>
+                                    </button>
+                                </div>
+                                <p
+                                    v-if="feature.summary"
+                                    class="mt-1.5 text-xs text-[#706f6c] dark:text-[#A1A09A]"
+                                >
+                                    {{ feature.summary }}
+                                </p>
+                                <p
+                                    v-if="
+                                        feature.description &&
+                                        feature.description !== feature.summary
+                                    "
+                                    class="mt-1 line-clamp-3 text-xs text-[#1b1b18]/80 dark:text-[#EDEDEC]/80"
+                                >
+                                    {{ feature.description }}
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                    <div
+                        v-else
+                        class="mt-4 rounded-md border border-dashed border-[#e3e3e0] p-6 text-center text-xs text-[#706f6c] dark:border-[#3E3E3A] dark:text-[#A1A09A]"
+                    >
+                        No class features in list. Use '+ Add Feature from
+                        Compendium' to choose from official 2024 class
+                        abilities.
+                    </div>
+                </section>
+
+                <!-- 2. Species Ancestral Traits -->
+                <section
+                    class="rounded-lg bg-white p-5 shadow-[inset_0px_0px_0px_1px_rgba(26,26,0,0.16)] sm:p-6 dark:bg-[#161615] dark:shadow-[inset_0px_0px_0px_1px_#fffaed2d]"
+                >
+                    <div
+                        class="flex flex-col justify-between gap-3 sm:flex-row sm:items-center"
+                    >
+                        <div>
+                            <div class="flex flex-wrap items-center gap-2">
+                                <h2 class="text-base font-semibold">
+                                    Species Traits &amp; Lineage
+                                </h2>
+                                <span
+                                    class="rounded-full bg-[#1b1b18]/10 px-2 py-0.5 text-xs font-semibold dark:bg-[#EDEDEC]/10"
+                                >
+                                    {{ sheet.traits_list.length }}
+                                </span>
+                                <button
+                                    v-if="props.canEdit"
+                                    type="button"
+                                    class="inline-flex cursor-pointer items-center gap-1 rounded-xs border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1 text-xs font-medium hover:border-[#1b1b18] dark:border-[#3E3E3A] dark:bg-[#0a0a0a] dark:hover:border-[#EDEDEC]"
+                                    @click="openCompendium('trait')"
+                                >
+                                    <span>+ Add Trait from Compendium</span>
+                                </button>
+                                <button
+                                    v-if="props.canEdit"
+                                    type="button"
+                                    class="inline-flex cursor-pointer items-center gap-1 rounded-xs border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1 text-xs font-medium text-[#706f6c] hover:border-[#1b1b18] hover:text-[#1b1b18] dark:border-[#3E3E3A] dark:bg-[#0a0a0a] dark:text-[#A1A09A] dark:hover:border-[#EDEDEC] dark:hover:text-[#EDEDEC]"
+                                    @click="
+                                        showCustomTraitForm =
+                                            !showCustomTraitForm
+                                    "
+                                >
+                                    <span>{{
+                                        showCustomTraitForm
+                                            ? 'Cancel'
+                                            : '+ Custom Trait'
+                                    }}</span>
+                                </button>
+                            </div>
+                            <p
+                                class="mt-0.5 text-xs text-[#706f6c] dark:text-[#A1A09A]"
+                            >
+                                Innate ancestral traits, darkvision,
+                                resistances, and sensory capabilities.
+                            </p>
+                        </div>
+                    </div>
+
+                    <!-- Custom Trait Form -->
+                    <div
+                        v-if="showCustomTraitForm"
+                        class="mt-4 rounded-md border border-[#e3e3e0] bg-[#FDFDFC] p-4 dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
+                    >
+                        <h4
+                            class="text-xs font-semibold tracking-wider text-[#706f6c] uppercase dark:text-[#A1A09A]"
+                        >
+                            Add Custom Species Trait
+                        </h4>
+                        <div class="mt-3 grid gap-3 sm:grid-cols-2">
+                            <div>
+                                <label class="block text-xs font-medium"
+                                    >Trait Name</label
+                                >
+                                <input
+                                    v-model="customTrait.name"
+                                    type="text"
+                                    placeholder="e.g. Darkvision"
+                                    class="mt-1 w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1.5 text-xs dark:border-[#3E3E3A] dark:bg-[#161615]"
+                                />
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium">
+                                    Species / Lineage
+                                </label>
+                                <input
+                                    v-model="customTrait.species_name"
+                                    type="text"
+                                    :placeholder="sheet.species || 'e.g. Elf'"
+                                    class="mt-1 w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1.5 text-xs dark:border-[#3E3E3A] dark:bg-[#161615]"
+                                />
+                            </div>
+                            <div class="sm:col-span-2">
+                                <label class="block text-xs font-medium"
+                                    >Description</label
+                                >
+                                <textarea
+                                    v-model="customTrait.description"
+                                    rows="2"
+                                    placeholder="Details of the trait..."
+                                    class="mt-1 w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1.5 text-xs dark:border-[#3E3E3A] dark:bg-[#161615]"
+                                />
+                            </div>
+                        </div>
+                        <div class="mt-3 flex justify-end gap-2">
+                            <button
+                                type="button"
+                                class="rounded-xs px-2.5 py-1 text-xs text-[#706f6c] hover:text-[#1b1b18] dark:text-[#A1A09A]"
+                                @click="showCustomTraitForm = false"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                class="rounded-xs bg-[#1b1b18] px-3 py-1 text-xs font-semibold text-white dark:bg-[#EDEDEC] dark:text-[#1b1b18]"
+                                @click="addCustomTrait"
+                            >
+                                Save to List
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Traits List -->
+                    <div
+                        v-if="sheet.traits_list.length > 0"
+                        class="mt-4 grid gap-3 sm:grid-cols-2"
+                    >
+                        <div
+                            v-for="trait in sheet.traits_list"
+                            :key="trait.id"
+                            class="flex flex-col justify-between rounded-md border border-[#e3e3e0] bg-[#FDFDFC] p-3.5 transition-colors dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
+                        >
+                            <div>
+                                <div
+                                    class="flex items-start justify-between gap-2"
+                                >
+                                    <div
+                                        class="flex flex-wrap items-center gap-1.5"
+                                    >
+                                        <h4 class="text-sm font-semibold">
+                                            {{ trait.name }}
+                                        </h4>
+                                        <span
+                                            v-if="trait.species_name"
+                                            class="rounded-xs border border-[#e3e3e0] px-1.5 py-0.5 text-[10px] font-medium text-[#706f6c] dark:border-[#3E3E3A] dark:text-[#A1A09A]"
+                                        >
+                                            {{ trait.species_name }}
+                                        </span>
+                                    </div>
+                                    <button
+                                        v-if="props.canEdit"
+                                        type="button"
+                                        title="Remove trait"
+                                        class="cursor-pointer rounded-xs p-1 text-xs text-[#706f6c] transition-colors hover:text-red-600 dark:text-[#A1A09A] dark:hover:text-red-400"
+                                        @click="removeTrait(trait.id)"
+                                    >
+                                        <span class="sr-only">Delete</span>
+                                        <svg
+                                            class="h-3.5 w-3.5"
+                                            fill="none"
+                                            viewBox="0 0 24 24"
+                                            stroke="currentColor"
+                                        >
+                                            <path
+                                                stroke-linecap="round"
+                                                stroke-linejoin="round"
+                                                stroke-width="2"
+                                                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                                            />
+                                        </svg>
+                                    </button>
+                                </div>
+                                <p
+                                    v-if="trait.summary"
+                                    class="mt-1.5 text-xs text-[#706f6c] dark:text-[#A1A09A]"
+                                >
+                                    {{ trait.summary }}
+                                </p>
+                                <p
+                                    v-if="
+                                        trait.description &&
+                                        trait.description !== trait.summary
+                                    "
+                                    class="mt-1 line-clamp-3 text-xs text-[#1b1b18]/80 dark:text-[#EDEDEC]/80"
+                                >
+                                    {{ trait.description }}
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                    <div
+                        v-else
+                        class="mt-4 rounded-md border border-dashed border-[#e3e3e0] p-6 text-center text-xs text-[#706f6c] dark:border-[#3E3E3A] dark:text-[#A1A09A]"
+                    >
+                        No species traits in list. Use '+ Add Trait from
+                        Compendium' to add ancestral features.
+                    </div>
+                </section>
+
+                <!-- 3. Feats (Origin, General & Epic Boons) -->
+                <section
+                    class="rounded-lg bg-white p-5 shadow-[inset_0px_0px_0px_1px_rgba(26,26,0,0.16)] sm:p-6 dark:bg-[#161615] dark:shadow-[inset_0px_0px_0px_1px_#fffaed2d]"
+                >
+                    <div
+                        class="flex flex-col justify-between gap-3 sm:flex-row sm:items-center"
+                    >
+                        <div>
+                            <div class="flex flex-wrap items-center gap-2">
+                                <h2 class="text-base font-semibold">
+                                    Feats (Origin, General &amp; Epic Boons)
+                                </h2>
+                                <span
+                                    class="rounded-full bg-[#1b1b18]/10 px-2 py-0.5 text-xs font-semibold dark:bg-[#EDEDEC]/10"
+                                >
+                                    {{ sheet.feats_list.length }}
+                                </span>
+                                <button
+                                    v-if="props.canEdit"
+                                    type="button"
+                                    class="inline-flex cursor-pointer items-center gap-1 rounded-xs border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1 text-xs font-medium hover:border-[#1b1b18] dark:border-[#3E3E3A] dark:bg-[#0a0a0a] dark:hover:border-[#EDEDEC]"
+                                    @click="openCompendium('feat')"
+                                >
+                                    <span>+ Add Feat from Compendium</span>
+                                </button>
+                                <button
+                                    v-if="props.canEdit"
+                                    type="button"
+                                    class="inline-flex cursor-pointer items-center gap-1 rounded-xs border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1 text-xs font-medium text-[#706f6c] hover:border-[#1b1b18] hover:text-[#1b1b18] dark:border-[#3E3E3A] dark:bg-[#0a0a0a] dark:text-[#A1A09A] dark:hover:border-[#EDEDEC] dark:hover:text-[#EDEDEC]"
+                                    @click="
+                                        showCustomFeatForm = !showCustomFeatForm
+                                    "
+                                >
+                                    <span>{{
+                                        showCustomFeatForm
+                                            ? 'Cancel'
+                                            : '+ Custom Feat'
+                                    }}</span>
+                                </button>
+                            </div>
+                            <p
+                                class="mt-0.5 text-xs text-[#706f6c] dark:text-[#A1A09A]"
+                            >
+                                2024 Origin feats from your background and
+                                General feats chosen at level milestones.
+                            </p>
+                        </div>
+                    </div>
+
+                    <!-- Custom Feat Form -->
+                    <div
+                        v-if="showCustomFeatForm"
+                        class="mt-4 rounded-md border border-[#e3e3e0] bg-[#FDFDFC] p-4 dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
+                    >
+                        <h4
+                            class="text-xs font-semibold tracking-wider text-[#706f6c] uppercase dark:text-[#A1A09A]"
+                        >
+                            Add Custom Feat
+                        </h4>
+                        <div class="mt-3 grid gap-3 sm:grid-cols-3">
+                            <div class="sm:col-span-2">
+                                <label class="block text-xs font-medium"
+                                    >Feat Name</label
+                                >
+                                <input
+                                    v-model="customFeat.name"
+                                    type="text"
+                                    placeholder="e.g. War Caster"
+                                    class="mt-1 w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1.5 text-xs dark:border-[#3E3E3A] dark:bg-[#161615]"
+                                />
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium"
+                                    >Category</label
+                                >
+                                <select
+                                    v-model="customFeat.category"
+                                    class="mt-1 w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1.5 text-xs dark:border-[#3E3E3A] dark:bg-[#161615]"
+                                >
+                                    <option value="Origin">Origin</option>
+                                    <option value="General">General</option>
+                                    <option value="Fighting Style">
+                                        Fighting Style
+                                    </option>
+                                    <option value="Epic Boon">Epic Boon</option>
+                                </select>
+                            </div>
+                            <div class="sm:col-span-3">
+                                <label class="block text-xs font-medium">
+                                    Summary / Description
+                                </label>
+                                <textarea
+                                    v-model="customFeat.description"
+                                    rows="2"
+                                    placeholder="Benefits and rules of this feat..."
+                                    class="mt-1 w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1.5 text-xs dark:border-[#3E3E3A] dark:bg-[#161615]"
+                                />
+                            </div>
+                        </div>
+                        <div class="mt-3 flex justify-end gap-2">
+                            <button
+                                type="button"
+                                class="rounded-xs px-2.5 py-1 text-xs text-[#706f6c] hover:text-[#1b1b18] dark:text-[#A1A09A]"
+                                @click="showCustomFeatForm = false"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                class="rounded-xs bg-[#1b1b18] px-3 py-1 text-xs font-semibold text-white dark:bg-[#EDEDEC] dark:text-[#1b1b18]"
+                                @click="addCustomFeat"
+                            >
+                                Save to List
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Feats List -->
+                    <div
+                        v-if="sheet.feats_list.length > 0"
+                        class="mt-4 grid gap-3 sm:grid-cols-2"
+                    >
+                        <div
+                            v-for="feat in sheet.feats_list"
+                            :key="feat.id"
+                            class="flex flex-col justify-between rounded-md border border-[#e3e3e0] bg-[#FDFDFC] p-3.5 transition-colors dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
+                        >
+                            <div>
+                                <div
+                                    class="flex items-start justify-between gap-2"
+                                >
+                                    <div
+                                        class="flex flex-wrap items-center gap-1.5"
+                                    >
+                                        <h4 class="text-sm font-semibold">
+                                            {{ feat.name }}
+                                        </h4>
+                                        <span
+                                            class="rounded-xs border border-[#e3e3e0] px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-[#706f6c] uppercase dark:border-[#3E3E3A] dark:text-[#A1A09A]"
+                                        >
+                                            {{ feat.category || 'Origin' }}
+                                        </span>
+                                    </div>
+                                    <button
+                                        v-if="props.canEdit"
+                                        type="button"
+                                        title="Remove feat"
+                                        class="cursor-pointer rounded-xs p-1 text-xs text-[#706f6c] transition-colors hover:text-red-600 dark:text-[#A1A09A] dark:hover:text-red-400"
+                                        @click="removeFeat(feat.id)"
+                                    >
+                                        <span class="sr-only">Delete</span>
+                                        <svg
+                                            class="h-3.5 w-3.5"
+                                            fill="none"
+                                            viewBox="0 0 24 24"
+                                            stroke="currentColor"
+                                        >
+                                            <path
+                                                stroke-linecap="round"
+                                                stroke-linejoin="round"
+                                                stroke-width="2"
+                                                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                                            />
+                                        </svg>
+                                    </button>
+                                </div>
+                                <p
+                                    v-if="feat.summary"
+                                    class="mt-1.5 text-xs text-[#706f6c] dark:text-[#A1A09A]"
+                                >
+                                    {{ feat.summary }}
+                                </p>
+                                <ul
+                                    v-if="
+                                        feat.benefits &&
+                                        feat.benefits.length > 0
+                                    "
+                                    class="mt-2 space-y-1 text-xs text-[#1b1b18]/80 dark:text-[#EDEDEC]/80"
+                                >
+                                    <li
+                                        v-for="(b, bi) in feat.benefits"
+                                        :key="bi"
+                                        class="flex items-start gap-1.5"
+                                    >
+                                        <span
+                                            class="text-[#706f6c] dark:text-[#A1A09A]"
+                                            >•</span
+                                        >
+                                        <span>{{ b }}</span>
+                                    </li>
+                                </ul>
+                                <p
+                                    v-else-if="
+                                        feat.description &&
+                                        feat.description !== feat.summary
+                                    "
+                                    class="mt-1 line-clamp-3 text-xs text-[#1b1b18]/80 dark:text-[#EDEDEC]/80"
+                                >
+                                    {{ feat.description }}
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                    <div
+                        v-else
+                        class="mt-4 rounded-md border border-dashed border-[#e3e3e0] p-6 text-center text-xs text-[#706f6c] dark:border-[#3E3E3A] dark:text-[#A1A09A]"
+                    >
+                        No feats in list. Use '+ Add Feat from Compendium' to
+                        add Origin or General feats.
+                    </div>
+                </section>
+
+                <!-- 4. Language Proficiencies -->
+                <section
+                    class="rounded-lg bg-white p-5 shadow-[inset_0px_0px_0px_1px_rgba(26,26,0,0.16)] sm:p-6 dark:bg-[#161615] dark:shadow-[inset_0px_0px_0px_1px_#fffaed2d]"
+                >
+                    <div
+                        class="flex flex-col justify-between gap-3 sm:flex-row sm:items-center"
+                    >
+                        <div>
+                            <div class="flex flex-wrap items-center gap-2">
+                                <h2 class="text-base font-semibold">
+                                    Language Proficiencies
+                                </h2>
+                                <span
+                                    class="rounded-full bg-[#1b1b18]/10 px-2 py-0.5 text-xs font-semibold dark:bg-[#EDEDEC]/10"
+                                >
+                                    {{ sheet.languages_list.length }}
+                                </span>
+                                <button
+                                    v-if="props.canEdit"
+                                    type="button"
+                                    class="inline-flex cursor-pointer items-center gap-1 rounded-xs border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1 text-xs font-medium hover:border-[#1b1b18] dark:border-[#3E3E3A] dark:bg-[#0a0a0a] dark:hover:border-[#EDEDEC]"
+                                    @click="openCompendium('language')"
+                                >
+                                    <span>+ Add Language from Compendium</span>
+                                </button>
+                                <button
+                                    v-if="props.canEdit"
+                                    type="button"
+                                    class="inline-flex cursor-pointer items-center gap-1 rounded-xs border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1 text-xs font-medium text-[#706f6c] hover:border-[#1b1b18] hover:text-[#1b1b18] dark:border-[#3E3E3A] dark:bg-[#0a0a0a] dark:text-[#A1A09A] dark:hover:border-[#EDEDEC] dark:hover:text-[#EDEDEC]"
+                                    @click="
+                                        showCustomLanguageForm =
+                                            !showCustomLanguageForm
+                                    "
+                                >
+                                    <span>{{
+                                        showCustomLanguageForm
+                                            ? 'Cancel'
+                                            : '+ Custom Language'
+                                    }}</span>
+                                </button>
+                            </div>
+                            <p
+                                class="mt-0.5 text-xs text-[#706f6c] dark:text-[#A1A09A]"
+                            >
+                                Standard, Rare, and Secret languages known by
+                                your character.
+                            </p>
+                        </div>
+                    </div>
+
+                    <!-- Custom Language Form -->
+                    <div
+                        v-if="showCustomLanguageForm"
+                        class="mt-4 rounded-md border border-[#e3e3e0] bg-[#FDFDFC] p-4 dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
+                    >
+                        <h4
+                            class="text-xs font-semibold tracking-wider text-[#706f6c] uppercase dark:text-[#A1A09A]"
+                        >
+                            Add Custom Language
+                        </h4>
+                        <div class="mt-3 grid gap-3 sm:grid-cols-3">
+                            <div>
+                                <label class="block text-xs font-medium">
+                                    Language Name
+                                </label>
+                                <input
+                                    v-model="customLanguage.name"
+                                    type="text"
+                                    placeholder="e.g. Sylvan"
+                                    class="mt-1 w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1.5 text-xs dark:border-[#3E3E3A] dark:bg-[#161615]"
+                                />
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium"
+                                    >Script</label
+                                >
+                                <input
+                                    v-model="customLanguage.script"
+                                    type="text"
+                                    placeholder="e.g. Elvish"
+                                    class="mt-1 w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1.5 text-xs dark:border-[#3E3E3A] dark:bg-[#161615]"
+                                />
+                            </div>
+                            <div>
+                                <label class="block text-xs font-medium"
+                                    >Type</label
+                                >
+                                <select
+                                    v-model="customLanguage.type"
+                                    class="mt-1 w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-2.5 py-1.5 text-xs dark:border-[#3E3E3A] dark:bg-[#161615]"
+                                >
+                                    <option value="Standard">Standard</option>
+                                    <option value="Exotic">Exotic</option>
+                                    <option value="Secret">Secret</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="mt-3 flex justify-end gap-2">
+                            <button
+                                type="button"
+                                class="rounded-xs px-2.5 py-1 text-xs text-[#706f6c] hover:text-[#1b1b18] dark:text-[#A1A09A]"
+                                @click="showCustomLanguageForm = false"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                class="rounded-xs bg-[#1b1b18] px-3 py-1 text-xs font-semibold text-white dark:bg-[#EDEDEC] dark:text-[#1b1b18]"
+                                @click="addCustomLanguage"
+                            >
+                                Save to List
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Languages List -->
+                    <div
+                        v-if="sheet.languages_list.length > 0"
+                        class="mt-4 flex flex-wrap gap-2.5"
+                    >
+                        <div
+                            v-for="lang in sheet.languages_list"
+                            :key="lang.id"
+                            class="inline-flex items-center gap-2 rounded-md border border-[#e3e3e0] bg-[#FDFDFC] px-3 py-2 text-xs transition-colors dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
+                        >
+                            <span class="font-semibold">{{ lang.name }}</span>
+                            <span
+                                v-if="lang.type"
+                                class="rounded-xs border border-[#e3e3e0] px-1.5 py-0.5 text-[10px] text-[#706f6c] dark:border-[#3E3E3A] dark:text-[#A1A09A]"
+                            >
+                                {{ lang.type }}
+                            </span>
+                            <span
+                                v-if="lang.script"
+                                class="text-[10px] text-[#706f6c] dark:text-[#A1A09A]"
+                            >
+                                (Script: {{ lang.script }})
+                            </span>
+                            <button
+                                v-if="props.canEdit"
+                                type="button"
+                                title="Remove language"
+                                class="cursor-pointer text-[#706f6c] hover:text-red-600 dark:text-[#A1A09A] dark:hover:text-red-400"
+                                @click="removeLanguage(lang.id)"
+                            >
+                                ×
+                            </button>
+                        </div>
+                    </div>
+                    <div
+                        v-else
+                        class="mt-4 rounded-md border border-dashed border-[#e3e3e0] p-6 text-center text-xs text-[#706f6c] dark:border-[#3E3E3A] dark:text-[#A1A09A]"
+                    >
+                        No languages recorded. Use '+ Add Language from
+                        Compendium' to add languages your character knows.
+                    </div>
+                </section>
+
+                <!-- Freeform Notes & Legacy Text -->
                 <section class="grid gap-5 sm:gap-6 lg:grid-cols-2">
                     <div
                         class="rounded-lg bg-white p-5 shadow-[inset_0px_0px_0px_1px_rgba(26,26,0,0.16)] sm:p-6 dark:bg-[#161615] dark:shadow-[inset_0px_0px_0px_1px_#fffaed2d]"
                     >
                         <h2 class="text-base font-semibold">
-                            Class Features, Species Traits &amp; Feats
+                            Custom Feature Notes &amp; Raw Text
                         </h2>
                         <p
                             class="mt-0.5 text-xs text-[#706f6c] dark:text-[#A1A09A]"
                         >
-                            Record your class features, species traits, origin
-                            feat benefits, and general feats.
+                            Quick notes or custom abilities without adding
+                            individual list entries.
                         </p>
                         <textarea
                             v-model="sheet.features_traits"
                             :disabled="!props.canEdit"
-                            rows="8"
-                            placeholder="Second Wind, Action Surge, Darkvision, Origin Feat details..."
+                            rows="6"
+                            placeholder="Additional feature notes or raw text..."
                             class="mt-3 block w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] p-3 text-sm focus:border-[#1b1b18] focus:outline-none dark:border-[#3E3E3A] dark:bg-[#0a0a0a] dark:focus:border-[#EDEDEC]"
                         />
                     </div>
@@ -2127,19 +3135,19 @@ function saveCharacter(): void {
                         class="rounded-lg bg-white p-5 shadow-[inset_0px_0px_0px_1px_rgba(26,26,0,0.16)] sm:p-6 dark:bg-[#161615] dark:shadow-[inset_0px_0px_0px_1px_#fffaed2d]"
                     >
                         <h2 class="text-base font-semibold">
-                            Proficiencies, Languages &amp; Other Traits
+                            Proficiencies &amp; Tool Training Notes
                         </h2>
                         <p
                             class="mt-0.5 text-xs text-[#706f6c] dark:text-[#A1A09A]"
                         >
-                            Armor training, weapon proficiencies, tool
-                            proficiencies, and languages known.
+                            Armor training, weapon proficiencies, and tool
+                            proficiencies text summary.
                         </p>
                         <textarea
                             v-model="sheet.proficiencies"
                             :disabled="!props.canEdit"
-                            rows="8"
-                            placeholder="Light/Medium/Heavy Armor, Shields, Simple & Martial Weapons, Common, Elvish, Thieves' Tools..."
+                            rows="6"
+                            placeholder="Armor Training, Weapon masteries, Tool proficiencies summary..."
                             class="mt-3 block w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] p-3 text-sm focus:border-[#1b1b18] focus:outline-none dark:border-[#3E3E3A] dark:bg-[#0a0a0a] dark:focus:border-[#EDEDEC]"
                         />
                     </div>
@@ -3719,10 +4727,17 @@ function saveCharacter(): void {
                             <button
                                 v-for="t in [
                                     { key: 'all', label: 'All' },
+                                    { key: 'feature', label: 'Features' },
+                                    { key: 'trait', label: 'Traits' },
+                                    { key: 'feat', label: 'Feats' },
+                                    { key: 'language', label: 'Languages' },
                                     { key: 'weapon', label: 'Weapons' },
                                     { key: 'armor', label: 'Armor' },
                                     { key: 'spell', label: 'Spells' },
                                     { key: 'gear', label: 'Gear' },
+                                    { key: 'class', label: 'Classes' },
+                                    { key: 'species', label: 'Species' },
+                                    { key: 'background', label: 'Backgrounds' },
                                 ]"
                                 :key="t.key"
                                 type="button"
@@ -3772,6 +4787,24 @@ function saveCharacter(): void {
                                         class="rounded-xs bg-[#f53003]/10 px-1.5 py-0.5 text-[10px] font-semibold text-[#f53003] dark:bg-[#FF4433]/15 dark:text-[#FF4433]"
                                     >
                                         Mastery: {{ entry.data.mastery }}
+                                    </span>
+                                    <span
+                                        v-if="entry.data?.category"
+                                        class="rounded-xs border border-[#e3e3e0] px-1.5 py-0.5 text-[10px] text-[#706f6c] dark:border-[#3E3E3A] dark:text-[#A1A09A]"
+                                    >
+                                        {{ entry.data.category }}
+                                    </span>
+                                    <span
+                                        v-if="entry.data?.source"
+                                        class="rounded-xs border border-[#e3e3e0] px-1.5 py-0.5 text-[10px] text-[#706f6c] capitalize dark:border-[#3E3E3A] dark:text-[#A1A09A]"
+                                    >
+                                        {{ entry.data.source }}
+                                    </span>
+                                    <span
+                                        v-if="entry.data?.level"
+                                        class="rounded-xs bg-[#1b1b18]/5 px-1.5 py-0.5 text-[10px] text-[#706f6c] dark:bg-[#EDEDEC]/10 dark:text-[#A1A09A]"
+                                    >
+                                        Lvl {{ entry.data.level }}
                                     </span>
                                 </div>
 

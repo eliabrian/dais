@@ -61,6 +61,44 @@ export type SheetInventoryItem = {
     description?: string;
 };
 
+export type SheetFeatureItem = {
+    id: string;
+    compendium_id?: string;
+    name: string;
+    source?: string;
+    level?: number;
+    summary?: string;
+    description?: string;
+};
+
+export type SheetTraitItem = {
+    id: string;
+    compendium_id?: string;
+    name: string;
+    species_name?: string;
+    summary?: string;
+    description?: string;
+};
+
+export type SheetFeatItem = {
+    id: string;
+    compendium_id?: string;
+    name: string;
+    category?: string;
+    summary?: string;
+    description?: string;
+    benefits?: string[];
+};
+
+export type SheetLanguageItem = {
+    id: string;
+    compendium_id?: string;
+    name: string;
+    script?: string;
+    type?: string;
+    notes?: string;
+};
+
 export type Dnd2024SheetData = {
     species?: string;
     class?: string;
@@ -95,6 +133,10 @@ export type Dnd2024SheetData = {
     armors_list?: SheetArmorItem[];
     spells_list?: SheetSpellItem[];
     inventory_list?: SheetInventoryItem[];
+    features_list?: SheetFeatureItem[];
+    traits_list?: SheetTraitItem[];
+    feats_list?: SheetFeatItem[];
+    languages_list?: SheetLanguageItem[];
     weapons_attacks?: string;
     armor_equipped?: string;
     features_traits?: string;

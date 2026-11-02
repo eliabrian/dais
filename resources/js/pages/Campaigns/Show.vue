@@ -4,7 +4,7 @@ import { useEcho } from '@laravel/echo-vue';
 import { computed, ref, watch } from 'vue';
 import AuthController from '@/actions/App/Http/Controllers/AuthController';
 import CampaignController from '@/actions/App/Http/Controllers/CampaignController';
-import CharacterController from '@/actions/App/Http/Controllers/CharacterController';
+import CharacterCreationWizard from '@/components/CharacterCreationWizard.vue';
 import { dashboard } from '@/routes';
 import campaigns from '@/routes/campaigns';
 import characters from '@/routes/characters';
@@ -75,53 +75,6 @@ const abilityKeys: { key: AbilityKey; short: string }[] = [
     { key: 'int', short: 'INT' },
     { key: 'wis', short: 'WIS' },
     { key: 'cha', short: 'CHA' },
-];
-
-const speciesOptions = [
-    'Human',
-    'Aasimar',
-    'Dragonborn',
-    'Dwarf',
-    'Elf',
-    'Gnome',
-    'Goliath',
-    'Halfling',
-    'Orc',
-    'Tiefling',
-];
-
-const classOptions = [
-    'Barbarian',
-    'Bard',
-    'Cleric',
-    'Druid',
-    'Fighter',
-    'Monk',
-    'Paladin',
-    'Ranger',
-    'Rogue',
-    'Sorcerer',
-    'Warlock',
-    'Wizard',
-];
-
-const backgroundOptions = [
-    'Acolyte',
-    'Artisan',
-    'Charlatan',
-    'Criminal',
-    'Entertainer',
-    'Farmer',
-    'Guard',
-    'Guide',
-    'Hermit',
-    'Merchant',
-    'Noble',
-    'Sage',
-    'Sailor',
-    'Scribe',
-    'Soldier',
-    'Wayfarer',
 ];
 
 function toggleActionPanel(panel: 'assign' | 'create' | 'settings'): void {
@@ -523,127 +476,15 @@ const inspiredCount = computed(
                 </Form>
             </section>
 
-            <!-- Create Character Directly in Campaign Panel -->
-            <section
+            <!-- Create Character Directly in Campaign (6-Step Wizard) -->
+            <CharacterCreationWizard
                 v-if="activeActionPanel === 'create'"
-                class="rounded-lg bg-white p-5 shadow-[inset_0px_0px_0px_1px_rgba(26,26,0,0.16)] sm:p-6 dark:bg-[#161615] dark:shadow-[inset_0px_0px_0px_1px_#fffaed2d]"
-            >
-                <div class="flex items-start justify-between gap-3">
-                    <h2 class="text-base font-semibold">
-                        Create Character in {{ props.campaign.name }}
-                    </h2>
-                    <button
-                        type="button"
-                        class="shrink-0 cursor-pointer py-1 text-xs text-[#706f6c] hover:text-[#1b1b18] dark:text-[#A1A09A] dark:hover:text-[#EDEDEC]"
-                        @click="activeActionPanel = 'none'"
-                    >
-                        Close
-                    </button>
-                </div>
-
-                <Form
-                    v-bind="CharacterController.store.form()"
-                    v-slot="{ errors, processing }"
-                    class="mt-4 space-y-4"
-                >
-                    <input
-                        type="hidden"
-                        name="campaign_id"
-                        :value="props.campaign.id"
-                    />
-                    <input
-                        type="hidden"
-                        name="system_id"
-                        :value="props.campaign.system_id"
-                    />
-
-                    <div class="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-5">
-                        <div class="sm:col-span-2 lg:col-span-2">
-                            <label class="block text-xs font-medium">
-                                Character name
-                            </label>
-                            <input
-                                v-focus
-                                name="name"
-                                type="text"
-                                required
-                                placeholder="e.g. Kaelen Dawnbringer"
-                                class="mt-1 block w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-3 py-2 text-sm dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
-                            />
-                            <p
-                                v-if="errors.name"
-                                class="mt-1 text-xs text-[#f53003] dark:text-[#FF4433]"
-                            >
-                                {{ errors.name }}
-                            </p>
-                        </div>
-
-                        <div>
-                            <label class="block text-xs font-medium">
-                                Species (2024)
-                            </label>
-                            <select
-                                name="species"
-                                class="mt-1 block w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-3 py-2 text-sm dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
-                            >
-                                <option
-                                    v-for="sp in speciesOptions"
-                                    :key="sp"
-                                    :value="sp"
-                                >
-                                    {{ sp }}
-                                </option>
-                            </select>
-                        </div>
-
-                        <div>
-                            <label class="block text-xs font-medium">
-                                Class
-                            </label>
-                            <select
-                                name="class"
-                                class="mt-1 block w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-3 py-2 text-sm dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
-                            >
-                                <option
-                                    v-for="cls in classOptions"
-                                    :key="cls"
-                                    :value="cls"
-                                >
-                                    {{ cls }}
-                                </option>
-                            </select>
-                        </div>
-
-                        <div class="sm:col-span-2 lg:col-span-1">
-                            <label class="block text-xs font-medium">
-                                Background
-                            </label>
-                            <select
-                                name="background"
-                                class="mt-1 block w-full rounded-sm border border-[#e3e3e0] bg-[#FDFDFC] px-3 py-2 text-sm dark:border-[#3E3E3A] dark:bg-[#0a0a0a]"
-                            >
-                                <option
-                                    v-for="bg in backgroundOptions"
-                                    :key="bg"
-                                    :value="bg"
-                                >
-                                    {{ bg }}
-                                </option>
-                            </select>
-                        </div>
-                    </div>
-
-                    <div class="flex items-center gap-3">
-                        <button
-                            type="submit"
-                            :disabled="processing"
-                            class="w-full cursor-pointer rounded-sm border border-black bg-[#1b1b18] px-5 py-2.5 text-xs font-medium text-white hover:bg-black disabled:opacity-60 sm:w-auto sm:py-2 dark:border-[#eeeeec] dark:bg-[#eeeeec] dark:text-[#1C1C1A]"
-                        >
-                            Create &amp; open sheet
-                        </button>
-                    </div>
-                </Form>
-            </section>
+                :systems="props.systems"
+                :fixed-campaign-id="props.campaign.id"
+                :fixed-campaign-name="props.campaign.name"
+                :fixed-system-id="props.campaign.system_id"
+                @close="activeActionPanel = 'none'"
+            />
 
             <!-- Campaign Settings Panel (GM Only) -->
             <section
